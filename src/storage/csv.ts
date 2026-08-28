@@ -4,9 +4,10 @@ import * as path from 'path';
 import { TradeResult } from '../executor/types';
 import { ScannedToken } from '../scanner/scanner';
 import { Signal } from '../signals/types';
-import { PaperPosition } from '../executor/paper';
+import { PaperPosition } from '../executor/types';
 import { logger } from '../utils/logger';
 import { config } from '../config';
+import { getErrorMessage } from '../utils/error';
 
 const OUTPUT_DIR = path.join(__dirname, '../../', config.csvOutputPath);
 
@@ -296,7 +297,7 @@ export function logScan(tokens: ScannedToken[], scanTime: number): void {
       logger.debug(`Logged ${records.length} scan entries`);
     }
   } catch (error) {
-    logger.error('Error logging scan:', error);
+    logger.error(`Error logging scan: ${getErrorMessage(error)}`);
   }
 }
 
@@ -341,7 +342,7 @@ export function logSignal(signal: Signal, executed: boolean): void {
       logger.debug(`Logged signal: ${signal.type} ${signal.symbol} ${signal.side}`);
     }
   } catch (error) {
-    logger.error('Error logging signal:', error);
+    logger.error(`Error logging signal: ${getErrorMessage(error)}`);
   }
 }
 
@@ -389,7 +390,7 @@ export function logPosition(position: PaperPosition): void {
 
     csvWriter.writeRecords([record]);
   } catch (error) {
-    logger.error('Error logging position:', error);
+    logger.error(`Error logging position: ${getErrorMessage(error)}`);
   }
 }
 
@@ -455,7 +456,7 @@ export function logTrade(trade: TradeResult, exitReason: string, highestPnl: num
     csvWriter.writeRecords([record]);
     logger.info(`Logged trade: ${trade.symbol} | PnL: ${trade.pnl} (${trade.pnlPct}%) | Net: ${netPnl}`);
   } catch (error) {
-    logger.error('Error logging trade:', error);
+    logger.error(`Error logging trade: ${getErrorMessage(error)}`);
   }
 }
 
@@ -514,6 +515,6 @@ export function logDailyStats(stats: any, balance: number, totalScans: number, t
     csvWriter.writeRecords([record]);
     logger.info(`Logged daily stats: ${stats.totalTrades} trades, ${stats.winRate * 100}% win rate, $${netPnl} net PnL`);
   } catch (error) {
-    logger.error('Error logging daily stats:', error);
+    logger.error(`Error logging daily stats: ${getErrorMessage(error)}`);
   }
 }
