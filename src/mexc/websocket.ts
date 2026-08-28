@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { OrderBook, Trade } from './types';
-import { logger } from '../../utils/logger';
-import { getErrorMessage } from '../../utils/error';
+import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/error';
 
 export type OrderBookHandler = (orderbook: OrderBook) => void;
 export type TradeHandler = (trade: Trade) => void;
