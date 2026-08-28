@@ -16,8 +16,9 @@ export class MexcProtoDecoder {
   static async create(): Promise<MexcProtoDecoder> {
     const root = new protobuf.Root();
 
-    // __dirname работает в commonjs
-    const protoDir = path.resolve(__dirname, '../proto');
+    // __dirname = /app/dist/mexc (после компиляции)
+    // ../../proto = /app/proto
+    const protoDir = path.resolve(__dirname, '../../proto');
 
     await root.load([
       path.join(protoDir, 'PushDataV3ApiWrapper.proto'),
