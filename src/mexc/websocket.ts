@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { OrderBook, Trade } from './types';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/error';
-import { MexcProtoDecoder, MexcDepthSnapshot } from './MexcProtoDecoder';
+import { MexcProtoDecoder } from './MexcProtoDecoder';
 
 export type OrderBookHandler = (orderbook: OrderBook) => void;
 export type TradeHandler = (trade: Trade) => void;
@@ -89,7 +89,7 @@ export class MexcWebSocket {
         }
       } else {
         // Бинарные protobuf сообщения (depth)
-        this.handleBinaryMessage(data);
+        this.handleBinaryMessage(data as WebSocket.RawData);
       }
     });
 
