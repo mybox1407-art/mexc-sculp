@@ -1,7 +1,7 @@
 import { Signal } from './types';
 import { calculateVWAP, calculateSupportResistance, calculateMidPrice } from './indicators';
 import { OrderBook, Candle } from '../mexc/types';
-import { config } from '../../config';
+import { config } from '../config';
 
 export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr: number): Signal | null {
   const vwap = calculateVWAP(candles);
