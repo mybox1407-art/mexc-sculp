@@ -12,7 +12,7 @@ export class MexcWebSocket {
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
   private reconnectDelay: number = 5000;
   private baseUrl: string = 'wss://wbs.mexc.com/ws';
-  private isConnected: boolean = false;
+  private isConnecting: boolean = false;
 
   constructor() {}
 
@@ -22,9 +22,9 @@ export class MexcWebSocket {
     }
     this.orderBookHandlers.get(symbol)!.push(handler);
     
-    if (this.isConnected) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(symbol, 'depth');
-    } else {
+    } else if (!this.isConnecting) {
       this.connect();
     }
   }
@@ -35,23 +35,28 @@ export class MexcWebSocket {
     }
     this.tradeHandlers.get(symbol)!.push(handler);
     
-    if (this.isConnected) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(symbol, 'trade');
-    } else {
+    } else if (!this.isConnecting) {
       this.connect();
     }
   }
 
   private connect(): void {
+    if (this.isConnecting) {
+      return;
+    }
+    
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return;
     }
 
+    this.isConnecting = true;
     this.ws = new WebSocket(this.baseUrl);
 
     this.ws.on('open', () => {
       logger.info('WebSocket connected');
-      this.isConnected = true;
+      this.isConnecting = false;
       this.subscribeAll();
     });
 
@@ -70,7 +75,7 @@ export class MexcWebSocket {
 
     this.ws.on('close', () => {
       logger.info('WebSocket closed, reconnecting...');
-      this.isConnected = false;
+      this.isConnecting = false;
       setTimeout(() => this.connect(), this.reconnectDelay);
     });
   }
@@ -144,7 +149,7 @@ export class MexcWebSocket {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
-      this.isConnected = false;
+      this.isConnecting = false;
     }
   }
 }
