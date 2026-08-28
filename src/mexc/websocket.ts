@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { OrderBook, Trade } from './types';
-import { logger } from '../utils/logger';
+import { logger } from '../../utils/logger';
 import { getErrorMessage } from '../../utils/error';
 
 export type OrderBookHandler = (orderbook: OrderBook) => void;
@@ -88,14 +88,13 @@ export class MexcWebSocket {
       const orderbook: OrderBook = {
         symbol: message.data.s.toUpperCase(),
         bids: message.data.b.map((b: any[]) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-        asks: message.data.a.map((a: any[]) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
+        asks: message.data.a.map((a: any[]) => ({ price: parseFloat(a[0]), size: parseFloat(b[1]) })),
         timestamp: message.data.E,
       };
       const handlers = this.orderBookHandlers.get(orderbook.symbol) || [];
       handlers.forEach(h => h(orderbook));
     } else if (message.stream === 'trade') {
       const trade: Trade = {
-        symbol: message.data.s.toUpperCase(),
         id: message.data.t,
         price: parseFloat(message.data.p),
         qty: parseFloat(message.data.q),
@@ -103,7 +102,7 @@ export class MexcWebSocket {
         time: message.data.T,
         isBuyerMaker: message.data.m,
       };
-      const handlers = this.tradeHandlers.get(trade.symbol) || [];
+      const handlers = this.tradeHandlers.get(message.data.s.toUpperCase()) || [];
       handlers.forEach(h => h(trade));
     }
   }
