@@ -1,5 +1,4 @@
 import axios, { AxiosInstance } from 'axios';
-import crypto from 'crypto';
 import { Ticker24h, SymbolInfo, Candle } from './types';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -7,16 +6,12 @@ import { getErrorMessage } from '../utils/error';
 
 export class MexcApi {
   private client: AxiosInstance;
-  private apiKey: string;
-  private apiSecret: string;
 
   constructor() {
     this.client = axios.create({
       baseURL: config.mexcBaseUrl,
       timeout: 10000,
     });
-    this.apiKey = config.mexcApiKey;
-    this.apiSecret = config.mexcApiSecret;
   }
 
   async getSymbols(): Promise<SymbolInfo[]> {
