@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { OrderBook, Trade } from './types';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/error';
+import { MexcProtoDecoder, MexcDepthSnapshot } from './MexcProtoDecoder';
 
 export type OrderBookHandler = (orderbook: OrderBook) => void;
 export type TradeHandler = (trade: Trade) => void;
@@ -14,13 +15,13 @@ export class MexcWebSocket {
   private baseUrl: string = 'wss://wbs.mexc.com/ws';
   private isConnecting: boolean = false;
   private pendingSubscriptions: Set<string> = new Set();
+  private decoder?: MexcProtoDecoder;
 
   constructor() {}
 
-  public subscribeOrderBook(symbol: string, handler: OrderBookHandler): void {
+  public async subscribeOrderBook(symbol: string, handler: OrderBookHandler): Promise<void> {
     if (!this.orderBookHandlers.has(symbol)) {
       this.orderBookHandlers.set(symbol, []);
-      // Правильный формат для MEXC
       this.pendingSubscriptions.add(`spot@public.limit.depth.v3.api.pb@${symbol.toUpperCase()}@5`);
     }
     this.orderBookHandlers.get(symbol)!.push(handler);
@@ -28,7 +29,7 @@ export class MexcWebSocket {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(symbol, 'depth');
     } else if (!this.isConnecting) {
-      this.connect();
+      await this.connect();
     }
   }
 
@@ -46,7 +47,7 @@ export class MexcWebSocket {
     }
   }
 
-  private connect(): void {
+  private async connect(): Promise<void> {
     if (this.isConnecting) {
       return;
     }
@@ -56,6 +57,19 @@ export class MexcWebSocket {
     }
 
     this.isConnecting = true;
+    
+    // Инициализируем декодер
+    if (!this.decoder) {
+      try {
+        this.decoder = await MexcProtoDecoder.create();
+        logger.info('MEXC ProtoDecoder initialized');
+      } catch (error) {
+        logger.error(`Failed to initialize ProtoDecoder: ${getErrorMessage(error)}`);
+        this.isConnecting = false;
+        return;
+      }
+    }
+    
     this.ws = new WebSocket(this.baseUrl);
 
     this.ws.on('open', () => {
@@ -64,13 +78,18 @@ export class MexcWebSocket {
       this.subscribeAll();
     });
 
-    this.ws.on('message', (data: WebSocket.Data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        this.handleMessage(message);
-      } catch (error) {
-        // Бинарные protobuf сообщения игнорируем
-        logger.debug(`Received binary/protobuf message`);
+    this.ws.on('message', (data: WebSocket.Data, isBinary: boolean) => {
+      if (!isBinary) {
+        // JSON сообщения (trade, ping, error responses)
+        try {
+          const message = JSON.parse(data.toString());
+          this.handleMessage(message);
+        } catch (error) {
+          logger.error(`Error parsing WebSocket message: ${getErrorMessage(error)}`);
+        }
+      } else {
+        // Бинарные protobuf сообщения (depth)
+        this.handleBinaryMessage(data);
       }
     });
 
@@ -92,7 +111,6 @@ export class MexcWebSocket {
 
     logger.info(`Sending ${this.pendingSubscriptions.size} pending subscriptions`);
     
-    // Отправляем подписки
     const subscriptions = Array.from(this.pendingSubscriptions);
     this.ws.send(JSON.stringify({
       method: 'SUBSCRIPTION',
@@ -117,8 +135,53 @@ export class MexcWebSocket {
     }));
   }
 
+  private handleBinaryMessage(data: WebSocket.RawData): void {
+    if (!this.decoder) {
+      logger.warn('ProtoDecoder not initialized');
+      return;
+    }
+
+    const buffer = this.toBuffer(data);
+
+    try {
+      const snapshot = this.decoder.decodeLimitDepth(buffer);
+
+      if (!snapshot) {
+        return;
+      }
+
+      const orderbook: OrderBook = {
+        symbol: snapshot.symbol,
+        bids: snapshot.bids.map(([price, size]) => ({
+          price: parseFloat(price),
+          size: parseFloat(size),
+        })),
+        asks: snapshot.asks.map(([price, size]) => ({
+          price: parseFloat(price),
+          size: parseFloat(size),
+        })),
+        timestamp: Date.now(),
+      };
+
+      const handlers = this.orderBookHandlers.get(orderbook.symbol) || [];
+      handlers.forEach(h => h(orderbook));
+    } catch (error) {
+      logger.error(`Cannot decode protobuf message: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private toBuffer(raw: WebSocket.RawData): Buffer {
+    if (Array.isArray(raw)) {
+      return Buffer.concat(raw);
+    }
+    if (raw instanceof ArrayBuffer) {
+      return Buffer.from(raw);
+    }
+    return raw as Buffer;
+  }
+
   private handleMessage(message: any): void {
-    // JSON сообщения (например, trade)
+    // JSON сообщения (trade, ping responses, errors)
     if (message.stream === 'trade') {
       const symbol = message.data.s.toUpperCase();
       const trade: Trade = {
@@ -132,6 +195,8 @@ export class MexcWebSocket {
       };
       const handlers = this.tradeHandlers.get(symbol) || [];
       handlers.forEach(h => h(trade));
+    } else if (message.code !== undefined && message.code !== 0) {
+      logger.error(`MEXC WebSocket error: ${JSON.stringify(message)}`);
     }
   }
 
