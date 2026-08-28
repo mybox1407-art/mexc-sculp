@@ -12,6 +12,7 @@ export class MexcWebSocket {
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
   private reconnectDelay: number = 5000;
   private baseUrl: string = 'wss://wbs.mexc.com/ws';
+  private isConnected: boolean = false;
 
   constructor() {}
 
@@ -20,7 +21,12 @@ export class MexcWebSocket {
       this.orderBookHandlers.set(symbol, []);
     }
     this.orderBookHandlers.get(symbol)!.push(handler);
-    this.connect();
+    
+    if (this.isConnected) {
+      this.sendSubscription(symbol, 'depth');
+    } else {
+      this.connect();
+    }
   }
 
   public subscribeTrades(symbol: string, handler: TradeHandler): void {
@@ -28,7 +34,12 @@ export class MexcWebSocket {
       this.tradeHandlers.set(symbol, []);
     }
     this.tradeHandlers.get(symbol)!.push(handler);
-    this.connect();
+    
+    if (this.isConnected) {
+      this.sendSubscription(symbol, 'trade');
+    } else {
+      this.connect();
+    }
   }
 
   private connect(): void {
@@ -40,6 +51,7 @@ export class MexcWebSocket {
 
     this.ws.on('open', () => {
       logger.info('WebSocket connected');
+      this.isConnected = true;
       this.subscribeAll();
     });
 
@@ -58,6 +70,7 @@ export class MexcWebSocket {
 
     this.ws.on('close', () => {
       logger.info('WebSocket closed, reconnecting...');
+      this.isConnected = false;
       setTimeout(() => this.connect(), this.reconnectDelay);
     });
   }
@@ -76,6 +89,7 @@ export class MexcWebSocket {
         method: 'SUBSCRIPTION',
         params: depthParams,
       }));
+      logger.info(`Subscribed to ${depthSymbols.length} depth streams`);
     }
 
     if (tradeSymbols.length > 0) {
@@ -84,7 +98,20 @@ export class MexcWebSocket {
         method: 'SUBSCRIPTION',
         params: tradeParams,
       }));
+      logger.info(`Subscribed to ${tradeSymbols.length} trade streams`);
     }
+  }
+
+  private sendSubscription(symbol: string, type: 'depth' | 'trade'): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const param = `${symbol.toLowerCase()}@${type}`;
+    this.ws.send(JSON.stringify({
+      method: 'SUBSCRIPTION',
+      params: [param],
+    }));
   }
 
   private handleMessage(message: any): void {
@@ -117,6 +144,7 @@ export class MexcWebSocket {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+      this.isConnected = false;
     }
   }
 }
