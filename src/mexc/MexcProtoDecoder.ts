@@ -20,7 +20,9 @@ export class MexcProtoDecoder {
   static async create(): Promise<MexcProtoDecoder> {
     const root = new protobuf.Root();
 
-    const protoDir = path.resolve(__dirname, '../../proto');
+    // __dirname = dist/ (после компиляции)
+    // ../proto = proto/ (из корня)
+    const protoDir = path.resolve(__dirname, '../proto');
 
     await root.load([
       path.join(protoDir, 'PushDataV3ApiWrapper.proto'),
