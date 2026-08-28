@@ -1,97 +1,82 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { config } from '../config';
-import { logger } from '../utils/logger';
 import { Signal } from '../signals/types';
 import { TradeResult } from '../executor/types';
-import { Stats } from '../executor/stats';
+import { config } from '../config';
+import { logger } from '../utils/logger';
 
-const bot = new TelegramBot(config.telegramBotToken, { polling: false });
+const bot = new TelegramBot(config.telegramBotToken);
 
 export function sendSignalAlert(signal: Signal): void {
   const message = `
-🚀 **Signal Alert**
+🚀 Signal Alert
 
-Symbol: ${signal.symbol}
 Type: ${signal.type}
+Symbol: ${signal.symbol}
 Side: ${signal.side}
 Entry: ${signal.entry}
 Target: ${signal.target}
 Stop: ${signal.stop}
 ATR: ${signal.atr}
-Confidence: ${signal.confidence ? (signal.confidence * 100).toFixed(1) + '%' : 'N/A'}
-Time: ${new Date(signal.timestamp).toLocaleString()}
+Confidence: ${(signal.confidence || 0) * 100}%
   `.trim();
 
-  bot.sendMessage(config.telegramChatId, message, { parse_mode: 'Markdown' }).catch(err => {
-    logger.error('Error sending signal alert:', err);
+  bot.sendMessage(config.telegramChatId, message).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`Telegram error: ${message}`);
   });
 }
 
 export function sendTradeAlert(trade: TradeResult): void {
-  const emoji = trade.pnl >= 0 ? '✅' : '❌';
-  const netPnl = trade.pnl - trade.commission - trade.slippage;
   const message = `
-${emoji} **Trade Closed**
+💰 Trade Alert
 
 Symbol: ${trade.symbol}
 Side: ${trade.side}
 Entry: ${trade.entryPrice}
 Exit: ${trade.exitPrice}
 Size: ${trade.size}
-Gross PnL: ${trade.pnl} (${trade.pnlPct}%)
-Commission: ${trade.commission}
-Slippage: ${trade.slippage}
-Net PnL: ${netPnl}
+PnL: ${trade.pnl} (${trade.pnlPct}%)
 Setup: ${trade.setupType}
-Time: ${new Date(trade.closeTimestamp).toLocaleString()}
   `.trim();
 
-  bot.sendMessage(config.telegramChatId, message, { parse_mode: 'Markdown' }).catch(err => {
-    logger.error('Error sending trade alert:', err);
+  bot.sendMessage(config.telegramChatId, message).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`Telegram error: ${message}`);
   });
 }
 
-export function sendDailyReport(stats: Stats, balance: number, activityStats: { totalScans: number; totalSignals: number; totalExecutions: number }): void {
+export function sendDailyReport(stats: any, balance: number, activityStats: any): void {
   const message = `
-📊 **Daily Report**
+📊 Daily Report
+
+Total Trades: ${stats.totalTrades}
+Win Rate: ${(stats.winRate * 100).toFixed(2)}%
+Total PnL: $${stats.totalPnl.toFixed(2)}
+Avg PnL: $${stats.avgPnl.toFixed(2)}
+Profit Factor: ${stats.profitFactor.toFixed(2)}
 
 Balance: $${balance.toFixed(2)}
 
-**Trades:**
-Total Trades: ${stats.totalTrades}
-Win Rate: ${(stats.winRate * 100).toFixed(1)}%
-Total PnL: $${stats.totalPnl.toFixed(2)}
-Avg PnL: $${stats.avgPnl.toFixed(2)}
-Avg Win: $${stats.avgWin.toFixed(2)}
-Avg Loss: $${stats.avgLoss.toFixed(2)}
-Profit Factor: ${stats.profitFactor.toFixed(2)}
-Total Commission: $${stats.totalCommission.toFixed(2)}
-Total Slippage: $${stats.totalSlippage.toFixed(2)}
-Net PnL: $${stats.netPnl.toFixed(2)}
-
-**Activity:**
-Total Scans: ${activityStats.totalScans}
-Total Signals: ${activityStats.totalSignals}
-Total Executions: ${activityStats.totalExecutions}
-
-**By Setup Type:**
-${Object.entries(stats.bySetupType).map(([type, data]) => `- ${type}: ${data.trades} trades, ${(data.winRate * 100).toFixed(1)}% win, $${data.avgPnl.toFixed(2)} avg, $${data.totalPnl.toFixed(2)} total`).join('\n')}
+Scans: ${activityStats.totalScans}
+Signals: ${activityStats.totalSignals}
+Executions: ${activityStats.totalExecutions}
   `.trim();
 
-  bot.sendMessage(config.telegramChatId, message, { parse_mode: 'Markdown' }).catch(err => {
-    logger.error('Error sending daily report:', err);
+  bot.sendMessage(config.telegramChatId, message).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`Telegram error: ${message}`);
   });
 }
 
-export function sendErrorAlert(error: string): void {
+export function sendErrorAlert(errorMessage: string): void {
   const message = `
-❌ **Error Alert**
+❌ Error Alert
 
-${error}
-Time: ${new Date().toLocaleString()}
+${errorMessage}
   `.trim();
 
-  bot.sendMessage(config.telegramChatId, message, { parse_mode: 'Markdown' }).catch(err => {
-    logger.error('Error sending error alert:', err);
+  bot.sendMessage(config.telegramChatId, message).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`Telegram error: ${message}`);
   });
 }
