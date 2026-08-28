@@ -3,8 +3,8 @@ import { MexcWebSocket, OrderBookHandler, TradeHandler } from '../mexc/websocket
 import { OrderBook, Trade, Candle, Ticker24h, SymbolInfo } from '../mexc/types';
 import { calculateDepth, calculateSpreadPct, calculateVolatilityMetrics } from './metrics';
 import { detectWalls, detectVolumeMismatch, detectRevivalPattern, isTokenSupported } from './filter';
-import { config } from '../../config';
-import { logger } from '../../utils/logger';
+import { config } from '../config';
+import { logger } from '../utils/logger';
 
 export interface ScannedToken {
   symbol: string;
