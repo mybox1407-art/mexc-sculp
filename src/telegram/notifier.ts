@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { config } from '../../config';
+import { config } from '../config';
 import { logger } from '../utils/logger';
 import { Signal } from '../signals/types';
 import { TradeResult } from '../executor/types';
