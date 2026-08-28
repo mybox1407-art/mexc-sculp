@@ -33,6 +33,7 @@ export interface OrderBook {
 }
 
 export interface Trade {
+  symbol: string;
   id: number;
   price: number;
   qty: number;
@@ -66,21 +67,4 @@ export interface SymbolInfo {
   maxQty: number;
   stepSize: number;
   tickSize: number;
-}
-
-export type SignalType = 'VWAP_MEAN_REVERSION' | 'SPREAD_SCALP' | 'LIQUIDITY_SWEEP';
-
-export type SignalSide = 'BUY' | 'SELL';
-
-export interface Signal {
-  type: SignalType;
-  symbol: string;
-  side: SignalSide;
-  entry: number;
-  target: number;
-  stop: number;
-  timestamp: number;
-  atr: number;
-  vwap?: number;
-  confidence?: number;
 }
