@@ -9,4 +9,4 @@ npm install -D @types/protobufjs
 docker compose up -d --build
 npm install
 
-docker compose logs -f arbitrage-bot
+docker compose logs -f mexc-scalper-bot
