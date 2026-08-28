@@ -14,7 +14,7 @@ export class MexcWebSocket {
   private reconnectDelay: number = 5000;
   private baseUrl: string = 'wss://wbs.mexc.com/ws';
   private isConnecting: boolean = false;
-  private pendingSubscriptions: Set<string> = new Set();
+  private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
   private decoder?: MexcProtoDecoder;
 
   constructor() {}
@@ -22,7 +22,7 @@ export class MexcWebSocket {
   public async subscribeOrderBook(symbol: string, handler: OrderBookHandler): Promise<void> {
     if (!this.orderBookHandlers.has(symbol)) {
       this.orderBookHandlers.set(symbol, []);
-      this.pendingSubscriptions.add(`spot@public.limit.depth.v3.api.pb@${symbol.toUpperCase()}@5`);
+      this.pendingSubscriptions.push({ symbol, type: 'depth' });
     }
     this.orderBookHandlers.get(symbol)!.push(handler);
     
@@ -36,7 +36,7 @@ export class MexcWebSocket {
   public subscribeTrades(symbol: string, handler: TradeHandler): void {
     if (!this.tradeHandlers.has(symbol)) {
       this.tradeHandlers.set(symbol, []);
-      this.pendingSubscriptions.add(`${symbol.toLowerCase()}@trade`);
+      this.pendingSubscriptions.push({ symbol, type: 'trade' });
     }
     this.tradeHandlers.get(symbol)!.push(handler);
     
@@ -109,15 +109,34 @@ export class MexcWebSocket {
       return;
     }
 
-    logger.info(`Sending ${this.pendingSubscriptions.size} pending subscriptions`);
+    logger.info(`Sending ${this.pendingSubscriptions.length} pending subscriptions`);
     
-    const subscriptions = Array.from(this.pendingSubscriptions);
-    this.ws.send(JSON.stringify({
-      method: 'SUBSCRIPTION',
-      params: subscriptions,
-    }));
+    // Группируем подписки по типу
+    const depthParams = this.pendingSubscriptions
+      .filter(s => s.type === 'depth')
+      .map(s => `spot@public.limit.depth.v3.api.pb@${s.symbol.toUpperCase()}@5`);
     
-    logger.info(`Subscribed to: ${subscriptions.slice(0, 5).join(', ')}...`);
+    const tradeParams = this.pendingSubscriptions
+      .filter(s => s.type === 'trade')
+      .map(s => `${s.symbol.toLowerCase()}@trade`);
+    
+    // Отправляем depth подписки
+    if (depthParams.length > 0) {
+      this.ws.send(JSON.stringify({
+        method: 'SUBSCRIPTION',
+        params: depthParams,
+      }));
+      logger.info(`Subscribed to ${depthParams.length} depth streams: ${depthParams.slice(0, 3).join(', ')}...`);
+    }
+    
+    // Отправляем trade подписки
+    if (tradeParams.length > 0) {
+      this.ws.send(JSON.stringify({
+        method: 'SUBSCRIPTION',
+        params: tradeParams,
+      }));
+      logger.info(`Subscribed to ${tradeParams.length} trade streams`);
+    }
   }
 
   private sendSubscription(symbol: string, type: 'depth' | 'trade'): void {
