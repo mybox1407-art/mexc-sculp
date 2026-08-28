@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { Ticker24h, SymbolInfo, Candle } from './types';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/error';
 
 export class MexcApi {
   private client: AxiosInstance;
@@ -16,23 +17,6 @@ export class MexcApi {
     });
     this.apiKey = config.mexcApiKey;
     this.apiSecret = config.mexcApiSecret;
-  }
-
-  private signQuery(params: Record<string, any>): string {
-    const queryString = Object.entries(params)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('&');
-    const signature = crypto
-      .createHmac('sha256', this.apiSecret)
-      .update(queryString)
-      .digest('hex');
-    return `${queryString}&signature=${signature}`;
-  }
-
-  private getHeaders(): Record<string, string> {
-    return {
-      'X-MEXC-APIKEY': this.apiKey,
-    };
   }
 
   async getSymbols(): Promise<SymbolInfo[]> {
@@ -50,7 +34,7 @@ export class MexcApi {
         tickSize: parseFloat(s.tickSize || '0'),
       }));
     } catch (error) {
-      logger.error('Error fetching symbols:', error);
+      logger.error(`Error fetching symbols: ${getErrorMessage(error)}`);
       throw error;
     }
   }
@@ -80,7 +64,7 @@ export class MexcApi {
         count: t.count,
       }));
     } catch (error) {
-      logger.error('Error fetching 24h tickers:', error);
+      logger.error(`Error fetching 24h tickers: ${getErrorMessage(error)}`);
       throw error;
     }
   }
@@ -105,7 +89,7 @@ export class MexcApi {
         takerBuyQuoteAssetVolume: parseFloat(k[10]),
       }));
     } catch (error) {
-      logger.error(`Error fetching candles for ${symbol}:`, error);
+      logger.error(`Error fetching candles for ${symbol}: ${getErrorMessage(error)}`);
       throw error;
     }
   }
