@@ -6,7 +6,7 @@ import { ScannedToken } from '../scanner/scanner';
 import { Signal } from '../signals/types';
 import { PaperPosition } from '../executor/paper';
 import { logger } from '../utils/logger';
-import { config } from '../../config';
+import { config } from '../config';
 
 const OUTPUT_DIR = path.join(__dirname, '../../', config.csvOutputPath);
 
