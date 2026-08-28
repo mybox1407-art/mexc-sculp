@@ -1,8 +1,8 @@
 import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
 import { Ticker24h, SymbolInfo, Candle } from './types';
-import { config } from '../../config';
-import { logger } from '../../utils/logger';
+import { config } from '../config';
+import { logger } from '../utils/logger';
 
 export class MexcApi {
   private client: AxiosInstance;
