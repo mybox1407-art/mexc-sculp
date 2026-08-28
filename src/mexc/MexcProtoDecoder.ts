@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import protobuf from 'protobufjs';
 
 export type MexcDepthSnapshot = {
@@ -9,9 +8,6 @@ export type MexcDepthSnapshot = {
   asks: [string, string][];
 };
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 export class MexcProtoDecoder {
   private constructor(
     private readonly wrapperType: protobuf.Type
@@ -20,8 +16,7 @@ export class MexcProtoDecoder {
   static async create(): Promise<MexcProtoDecoder> {
     const root = new protobuf.Root();
 
-    // __dirname = dist/ (после компиляции)
-    // ../proto = proto/ (из корня)
+    // __dirname работает в commonjs
     const protoDir = path.resolve(__dirname, '../proto');
 
     await root.load([
