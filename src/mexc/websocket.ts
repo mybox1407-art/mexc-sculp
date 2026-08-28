@@ -13,12 +13,14 @@ export class MexcWebSocket {
   private reconnectDelay: number = 5000;
   private baseUrl: string = 'wss://wbs.mexc.com/ws';
   private isConnecting: boolean = false;
+  private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
 
   constructor() {}
 
   public subscribeOrderBook(symbol: string, handler: OrderBookHandler): void {
     if (!this.orderBookHandlers.has(symbol)) {
       this.orderBookHandlers.set(symbol, []);
+      this.pendingSubscriptions.push({ symbol, type: 'depth' });
     }
     this.orderBookHandlers.get(symbol)!.push(handler);
     
@@ -32,6 +34,7 @@ export class MexcWebSocket {
   public subscribeTrades(symbol: string, handler: TradeHandler): void {
     if (!this.tradeHandlers.has(symbol)) {
       this.tradeHandlers.set(symbol, []);
+      this.pendingSubscriptions.push({ symbol, type: 'trade' });
     }
     this.tradeHandlers.get(symbol)!.push(handler);
     
@@ -85,26 +88,12 @@ export class MexcWebSocket {
       return;
     }
 
-    const depthSymbols = Array.from(this.orderBookHandlers.keys());
-    const tradeSymbols = Array.from(this.tradeHandlers.keys());
-
-    if (depthSymbols.length > 0) {
-      const depthParams = depthSymbols.map(s => `${s.toLowerCase()}@depth`);
-      this.ws.send(JSON.stringify({
-        method: 'SUBSCRIPTION',
-        params: depthParams,
-      }));
-      logger.info(`Subscribed to ${depthSymbols.length} depth streams`);
+    // Отправляем подписки по одной
+    for (const { symbol, type } of this.pendingSubscriptions) {
+      this.sendSubscription(symbol, type);
     }
-
-    if (tradeSymbols.length > 0) {
-      const tradeParams = tradeSymbols.map(s => `${s.toLowerCase()}@trade`);
-      this.ws.send(JSON.stringify({
-        method: 'SUBSCRIPTION',
-        params: tradeParams,
-      }));
-      logger.info(`Subscribed to ${tradeSymbols.length} trade streams`);
-    }
+    
+    this.pendingSubscriptions = [];
   }
 
   private sendSubscription(symbol: string, type: 'depth' | 'trade'): void {
@@ -115,7 +104,7 @@ export class MexcWebSocket {
     const param = `${symbol.toLowerCase()}@${type}`;
     this.ws.send(JSON.stringify({
       method: 'SUBSCRIPTION',
-      params: [param],
+      params: [param],  // Массив из ОДНОГО элемента
     }));
   }
 
