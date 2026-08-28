@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import { OrderBook, Trade } from './types';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../../utils/error';
 
 export type OrderBookHandler = (orderbook: OrderBook) => void;
 export type TradeHandler = (trade: Trade) => void;
@@ -47,12 +48,12 @@ export class MexcWebSocket {
         const message = JSON.parse(data.toString());
         this.handleMessage(message);
       } catch (error) {
-        logger.error('Error parsing WebSocket message:', error);
+        logger.error(`Error parsing WebSocket message: ${getErrorMessage(error)}`);
       }
     });
 
-    this.ws.on('error', (error) => {
-      logger.error('WebSocket error:', error);
+    this.ws.on('error', (error: Error) => {
+      logger.error(`WebSocket error: ${error.message}`);
     });
 
     this.ws.on('close', () => {
@@ -94,6 +95,7 @@ export class MexcWebSocket {
       handlers.forEach(h => h(orderbook));
     } else if (message.stream === 'trade') {
       const trade: Trade = {
+        symbol: message.data.s.toUpperCase(),
         id: message.data.t,
         price: parseFloat(message.data.p),
         qty: parseFloat(message.data.q),
