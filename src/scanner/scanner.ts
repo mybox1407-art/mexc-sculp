@@ -46,7 +46,10 @@ export class Scanner {
     this.tickers = new Map((await this.mexcApi.getTickers24h()).map(t => [t.symbol, t]));
     logger.info(`Loaded ${this.tickers.size} tickers`);
     
-    const usdtSymbols = this.symbols.filter(s => s.quoteAsset === 'USDT' && s.status === 'TRADING');
+    const usdtSymbols = this.symbols.filter(s => 
+      s.quoteAsset === 'USDT' && 
+      s.status === '1'
+    );
     logger.info(`Filtered ${usdtSymbols.length} USDT trading symbols`);
     
     for (const symbol of usdtSymbols.slice(0, 100)) {
