@@ -142,13 +142,19 @@ export class MexcWebSocket {
     }
 
     const buffer = this.toBuffer(data);
+    
+    // Логирование для отладки
+    logger.debug(`Received binary message: ${buffer.length} bytes, hex: ${buffer.subarray(0, 32).toString('hex')}`);
 
     try {
       const snapshot = this.decoder.decodeLimitDepth(buffer);
 
       if (!snapshot) {
+        logger.debug('Decoder returned null');
         return;
       }
+
+      logger.debug(`Decoded orderbook for ${snapshot.symbol}: ${snapshot.bids.length} bids, ${snapshot.asks.length} asks`);
 
       const orderbook: OrderBook = {
         symbol: snapshot.symbol,
