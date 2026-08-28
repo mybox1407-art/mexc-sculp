@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
-  bot:
+  mexc-scalper-bot:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     env_file:
-      - ../.env
+      - .env
     volumes:
-      - ../output:/app/output
+      - ./output:/app/output
     restart: unless-stopped
