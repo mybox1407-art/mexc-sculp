@@ -7,6 +7,5 @@ RUN npm install
 
 COPY . .
 
-RUN npm run build
-
-CMD ["npm", "start"]
+# Не делаем npm run build, просто смотрим файлы
+CMD ["sh", "-c", "ls -R /app/src"]
