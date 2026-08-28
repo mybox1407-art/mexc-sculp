@@ -1,9 +1,9 @@
-cd mexc-triangular-arbitrage
+cd mexc-sculp
 docker compose down
 cd ~
-rm -rf mexc-triangular-arbitrage
-git clone https://github.com/mybox1407-art/mexc-triangular-arbitrage.git
-cd mexc-triangular-arbitrage
+rm -rf mexc-sculp
+git clone https://github.com/mybox1407-art/mexc-sculp.git
+cd mexc-sculp
 npm install protobufjs
 npm install -D @types/protobufjs
 docker compose up -d --build
