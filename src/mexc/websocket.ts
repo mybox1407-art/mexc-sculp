@@ -13,14 +13,15 @@ export class MexcWebSocket {
   private reconnectDelay: number = 5000;
   private baseUrl: string = 'wss://wbs.mexc.com/ws';
   private isConnecting: boolean = false;
-  private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
+  private pendingSubscriptions: Set<string> = new Set();
 
   constructor() {}
 
   public subscribeOrderBook(symbol: string, handler: OrderBookHandler): void {
     if (!this.orderBookHandlers.has(symbol)) {
       this.orderBookHandlers.set(symbol, []);
-      this.pendingSubscriptions.push({ symbol, type: 'depth' });
+      // Правильный формат для MEXC
+      this.pendingSubscriptions.add(`spot@public.limit.depth.v3.api.pb@${symbol.toUpperCase()}@5`);
     }
     this.orderBookHandlers.get(symbol)!.push(handler);
     
@@ -34,7 +35,7 @@ export class MexcWebSocket {
   public subscribeTrades(symbol: string, handler: TradeHandler): void {
     if (!this.tradeHandlers.has(symbol)) {
       this.tradeHandlers.set(symbol, []);
-      this.pendingSubscriptions.push({ symbol, type: 'trade' });
+      this.pendingSubscriptions.add(`${symbol.toLowerCase()}@trade`);
     }
     this.tradeHandlers.get(symbol)!.push(handler);
     
@@ -68,7 +69,8 @@ export class MexcWebSocket {
         const message = JSON.parse(data.toString());
         this.handleMessage(message);
       } catch (error) {
-        logger.error(`Error parsing WebSocket message: ${getErrorMessage(error)}`);
+        // Бинарные protobuf сообщения игнорируем
+        logger.debug(`Received binary/protobuf message`);
       }
     });
 
@@ -88,12 +90,16 @@ export class MexcWebSocket {
       return;
     }
 
-    // Отправляем подписки по одной
-    for (const { symbol, type } of this.pendingSubscriptions) {
-      this.sendSubscription(symbol, type);
-    }
+    logger.info(`Sending ${this.pendingSubscriptions.size} pending subscriptions`);
     
-    this.pendingSubscriptions = [];
+    // Отправляем подписки
+    const subscriptions = Array.from(this.pendingSubscriptions);
+    this.ws.send(JSON.stringify({
+      method: 'SUBSCRIPTION',
+      params: subscriptions,
+    }));
+    
+    logger.info(`Subscribed to: ${subscriptions.slice(0, 5).join(', ')}...`);
   }
 
   private sendSubscription(symbol: string, type: 'depth' | 'trade'): void {
@@ -101,24 +107,19 @@ export class MexcWebSocket {
       return;
     }
 
-    const param = `${symbol.toLowerCase()}@${type}`;
+    const param = type === 'depth'
+      ? `spot@public.limit.depth.v3.api.pb@${symbol.toUpperCase()}@5`
+      : `${symbol.toLowerCase()}@trade`;
+    
     this.ws.send(JSON.stringify({
       method: 'SUBSCRIPTION',
-      params: [param],  // Массив из ОДНОГО элемента
+      params: [param],
     }));
   }
 
   private handleMessage(message: any): void {
-    if (message.stream === 'depth') {
-      const orderbook: OrderBook = {
-        symbol: message.data.s.toUpperCase(),
-        bids: message.data.b.map((b: any[]) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-        asks: message.data.a.map((a: any[]) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-        timestamp: message.data.E,
-      };
-      const handlers = this.orderBookHandlers.get(orderbook.symbol) || [];
-      handlers.forEach(h => h(orderbook));
-    } else if (message.stream === 'trade') {
+    // JSON сообщения (например, trade)
+    if (message.stream === 'trade') {
       const symbol = message.data.s.toUpperCase();
       const trade: Trade = {
         symbol,
