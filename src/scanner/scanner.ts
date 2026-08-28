@@ -94,6 +94,12 @@ export class Scanner {
     this.tickers = new Map((await this.mexcApi.getTickers24h()).map(t => [t.symbol, t]));
     
     const results: ScannedToken[] = [];
+    let totalWithOrderbook = 0;
+    let totalWithDepth = 0;
+    let totalWithCandles = 0;
+    let totalSupported = 0;
+    let totalAtr = 0;
+    let totalChange24h = 0;
     
     for (const [symbol, ticker] of this.tickers.entries()) {
       const orderbook = this.orderbooks.get(symbol);
@@ -102,9 +108,15 @@ export class Scanner {
       if (!orderbook) {
         continue;
       }
+      totalWithOrderbook++;
       
       const depthMetrics = calculateDepth(orderbook, 5);
       const spreadPct = calculateSpreadPct(orderbook);
+      
+      if (depthMetrics.totalDepth < 10) {
+        continue;
+      }
+      totalWithDepth++;
       
       let candles: Candle[] = this.candles.get(symbol) || [];
       if (candles.length === 0) {
@@ -115,6 +127,7 @@ export class Scanner {
           continue;
         }
       }
+      totalWithCandles++;
       
       const volMetrics = calculateVolatilityMetrics(candles, parseFloat(ticker.priceChangePercent));
       
@@ -132,24 +145,38 @@ export class Scanner {
         config.maxSpreadPct
       );
       
-      if (isSupported && volMetrics.atr >= config.minAtr1m && Math.abs(parseFloat(ticker.priceChangePercent)) >= config.min24hChangePct) {
-        results.push({
-          symbol,
-          depth: depthMetrics.totalDepth,
-          spreadPct,
-          atr: volMetrics.atr,
-          change24hPct: parseFloat(ticker.priceChangePercent),
-          hasWalls: wallResult.hasWalls,
-          hasVolumeMismatch: volumeResult.hasMismatch,
-          hasRevivalPattern: revivalPattern,
-          orderbook,
-          trades,
-          candles,
-        });
+      if (!isSupported) {
+        continue;
       }
+      totalSupported++;
+      
+      if (volMetrics.atr < config.minAtr1m) {
+        continue;
+      }
+      totalAtr++;
+      
+      if (Math.abs(parseFloat(ticker.priceChangePercent)) < config.min24hChangePct) {
+        continue;
+      }
+      totalChange24h++;
+      
+      results.push({
+        symbol,
+        depth: depthMetrics.totalDepth,
+        spreadPct,
+        atr: volMetrics.atr,
+        change24hPct: parseFloat(ticker.priceChangePercent),
+        hasWalls: wallResult.hasWalls,
+        hasVolumeMismatch: volumeResult.hasMismatch,
+        hasRevivalPattern: revivalPattern,
+        orderbook,
+        trades,
+        candles,
+      });
     }
     
     this.scannedTokens = results;
+    logger.info(`Scan: ${totalWithOrderbook} orderbooks, ${totalWithDepth} depth>10, ${totalWithCandles} candles, ${totalSupported} supported, ${totalAtr} atr, ${totalChange24h} change24h`);
     logger.info(`Scan complete: ${results.length} tokens matched`);
     
     return results;
