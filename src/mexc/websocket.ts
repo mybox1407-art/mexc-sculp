@@ -63,12 +63,16 @@ export class MexcWebSocket {
   }
 
   private subscribeAll(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
     const depthSymbols = Array.from(this.orderBookHandlers.keys());
     const tradeSymbols = Array.from(this.tradeHandlers.keys());
 
     if (depthSymbols.length > 0) {
       const depthParams = depthSymbols.map(s => `${s.toLowerCase()}@depth`);
-      this.ws?.send(JSON.stringify({
+      this.ws.send(JSON.stringify({
         method: 'SUBSCRIPTION',
         params: depthParams,
       }));
@@ -76,7 +80,7 @@ export class MexcWebSocket {
 
     if (tradeSymbols.length > 0) {
       const tradeParams = tradeSymbols.map(s => `${s.toLowerCase()}@trade`);
-      this.ws?.send(JSON.stringify({
+      this.ws.send(JSON.stringify({
         method: 'SUBSCRIPTION',
         params: tradeParams,
       }));
