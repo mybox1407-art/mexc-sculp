@@ -7,6 +7,7 @@ import { sendSignalAlert, sendTradeAlert, sendDailyReport, sendErrorAlert } from
 import { config } from './config';
 import { logger } from './utils/logger';
 import { sleep } from './utils/helpers';
+import { getErrorMessage } from './utils/error';
 
 async function main() {
   logger.info('Starting MEXC Scalper Bot...');
@@ -59,8 +60,9 @@ async function main() {
       await sleep(config.scanIntervalMs);
     }
   } catch (error) {
-    logger.error('Fatal error:', error);
-    sendErrorAlert(`Fatal error: ${error}`);
+    const errMessage = getErrorMessage(error);
+    logger.error(`Fatal error: ${errMessage}`);
+    sendErrorAlert(`Fatal error: ${errMessage}`);
     process.exit(1);
   }
 }
