@@ -1,8 +1,8 @@
 import { PaperOrder, PaperPosition, TradeResult } from './types';
 import { Signal } from '../signals/types';
 import { OrderBook } from '../mexc/types';
-import { config } from '../../config';
-import { logger } from '../../utils/logger';
+import { config } from '../config';
+import { logger } from '../utils/logger';
 
 let orderCounter = 0;
 
