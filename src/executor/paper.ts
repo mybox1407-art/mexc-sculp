@@ -2,8 +2,8 @@ import { PaperOrder, PaperPosition, TradeResult } from './types';
 import { Signal } from '../signals/types';
 import { OrderBook } from '../mexc/types';
 import { createPaperOrder, simulateOrderFill, calculateExitPrice, shouldExitPosition, calculateTradeResult } from './orders';
-import { config } from '../../config';
-import { logger } from '../../utils/logger';
+import { config } from '../config';
+import { logger } from '../utils/logger';
 import { logPosition, logTrade } from '../storage/csv';
 
 export interface PositionTracking {
