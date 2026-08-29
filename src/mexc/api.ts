@@ -83,18 +83,26 @@ export class MexcApi {
         },
       });
       
-      const candles = response.data.data || [];
+      const data = response.data.data;
       
-      return candles.map((k: any) => ({
+      const times = data.time || [];
+      const opens = data.open || [];
+      const highs = data.high || [];
+      const lows = data.low || [];
+      const closes = data.close || [];
+      const vols = data.vol || [];
+      const amounts = data.amount || [];
+      
+      return times.map((t: number, i: number) => ({
         symbol,
-        openTime: k.time,
-        open: parseFloat(k.open),
-        high: parseFloat(k.high),
-        low: parseFloat(k.low),
-        close: parseFloat(k.close),
-        volume: parseFloat(k.vol),
-        closeTime: k.time,
-        quoteAssetVolume: parseFloat(k.amount),
+        openTime: t,
+        open: parseFloat(opens[i]),
+        high: parseFloat(highs[i]),
+        low: parseFloat(lows[i]),
+        close: parseFloat(closes[i]),
+        volume: parseFloat(vols[i]),
+        closeTime: t,
+        quoteAssetVolume: parseFloat(amounts[i]),
         numberOfTrades: 0,
         takerBuyBaseAssetVolume: 0,
         takerBuyQuoteAssetVolume: 0,
