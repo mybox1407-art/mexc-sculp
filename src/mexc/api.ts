@@ -75,12 +75,12 @@ export class MexcApi {
     }
   }
 
-  async getCandles(symbol: string, interval: string, limit: number = 100): Promise<Candle[]> {
+  async getCandles(symbol: string, _interval: string, limit: number = 100): Promise<Candle[]> {
     try {
       const response = await this.client.get('/api/v1/contract/kline', {
         params: { 
           symbol, 
-          interval: '1m',  // ← жёстко 1m для фьючерсов
+          interval: '1m',
           limit 
         },
       });
@@ -102,17 +102,5 @@ export class MexcApi {
       logger.error(`Error fetching candles for ${symbol}: ${getErrorMessage(error)}`);
       throw error;
     }
-  }
-
-  private mapInterval(interval: string): string {
-    const map: Record<string, string> = {
-      '1m': '1m',
-      '5m': '5m',
-      '15m': '15m',
-      '1h': '1h',
-      '4h': '4h',
-      '1d': '1d',
-    };
-    return map[interval] || '1m';
   }
 }
