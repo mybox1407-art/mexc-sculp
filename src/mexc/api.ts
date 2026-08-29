@@ -51,7 +51,7 @@ export class MexcApi {
       return response.data.data.map((t: any) => ({
         symbol: t.symbol,
         priceChange: t.riseFallValue || '0',
-        priceChangePercent: t.riseFallRate || '0',
+        priceChangePercent: (parseFloat(t.riseFallRate) * 100).toString(),
         weightedAvgPrice: t.fairPrice || '0',
         prevClosePrice: t.open_price || '0',
         lastPrice: t.last || '0',
