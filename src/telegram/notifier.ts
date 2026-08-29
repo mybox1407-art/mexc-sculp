@@ -6,18 +6,30 @@ import { logger } from '../utils/logger';
 
 const bot = new TelegramBot(config.telegramBotToken);
 
-export function sendSignalAlert(signal: Signal): void {
-  const message = `
-🚀 Signal Alert
+export function sendTradeOpenedAlert(
+  signal: Signal,
+  size: number,
+  positionValue: number,
+  balance: number,
+  freeBalance: number
+): void {
+  const slPct = ((signal.stop - signal.entry) / signal.entry * 100 * (signal.side === 'BUY' ? -1 : 1)).toFixed(2);
+  const tpPct = ((signal.target - signal.entry) / signal.entry * 100 * (signal.side === 'BUY' ? 1 : -1)).toFixed(2);
 
-Type: ${signal.type}
+  const message = `
+✅ DEAL OPENED
+
 Symbol: ${signal.symbol}
 Side: ${signal.side}
-Entry: ${signal.entry}
-Target: ${signal.target}
-Stop: ${signal.stop}
-ATR: ${signal.atr}
-Confidence: ${(signal.confidence || 0) * 100}%
+Entry: ${signal.entry.toFixed(4)}
+Size: ${size.toFixed(2)} ${signal.symbol.split('_')[0]}
+Value: ${positionValue.toFixed(2)} USDT
+
+SL: ${signal.stop.toFixed(4)} (${slPct}%)
+TP: ${signal.target.toFixed(4)} (${tpPct}%)
+
+Balance: ${balance.toFixed(2)} USDT
+Free: ${freeBalance.toFixed(2)} USDT
   `.trim();
 
   bot.sendMessage(config.telegramChatId, message).catch((err: unknown) => {
@@ -26,17 +38,28 @@ Confidence: ${(signal.confidence || 0) * 100}%
   });
 }
 
-export function sendTradeAlert(trade: TradeResult): void {
+export function sendTradeClosedAlert(
+  trade: TradeResult,
+  exitReason: string,
+  balance: number,
+  freeBalance: number
+): void {
+  const emoji = trade.pnl >= 0 ? '💰' : '❌';
+  const pnlEmoji = trade.pnl >= 0 ? '✅' : '🔴';
+
   const message = `
-💰 Trade Alert
+${emoji} DEAL CLOSED
 
 Symbol: ${trade.symbol}
 Side: ${trade.side}
-Entry: ${trade.entryPrice}
-Exit: ${trade.exitPrice}
-Size: ${trade.size}
-PnL: ${trade.pnl} (${trade.pnlPct}%)
-Setup: ${trade.setupType}
+Entry: ${trade.entryPrice.toFixed(4)} → Exit: ${trade.exitPrice.toFixed(4)}
+Size: ${trade.size.toFixed(2)} ${trade.symbol.split('_')[0]}
+
+${pnlEmoji} PnL: ${trade.pnl.toFixed(2)} USDT (${trade.pnlPct.toFixed(2)}%)
+Exit: ${exitReason}
+
+Balance: ${balance.toFixed(2)} USDT
+Free: ${freeBalance.toFixed(2)} USDT
   `.trim();
 
   bot.sendMessage(config.telegramChatId, message).catch((err: unknown) => {
