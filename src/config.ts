@@ -21,6 +21,7 @@ export interface Config {
   slAtrMultiple: number;
   maxRiskPerTradePct: number;
   maxPositions: number;
+  positionSizePct: number;
   paperTrading: boolean;
   logLevel: string;
   logScannerDetails: boolean;
@@ -46,7 +47,8 @@ export const config: Config = {
   tpPct2: parseFloat(process.env.TP_PCT_2 || '0.4'),
   slAtrMultiple: parseFloat(process.env.SL_ATR_MULTIPLE || '2'),
   maxRiskPerTradePct: parseFloat(process.env.MAX_RISK_PER_TRADE_PCT || '1'),
-  maxPositions: parseInt(process.env.MAX_POSITIONS || '5', 10),
+  maxPositions: parseInt(process.env.MAX_POSITIONS || '3', 10),
+  positionSizePct: parseFloat(process.env.POSITION_SIZE_PCT || '30'),
   paperTrading: process.env.PAPER_TRADING !== 'false',
   logLevel: process.env.LOG_LEVEL || 'info',
   logScannerDetails: process.env.LOG_SCANNER_DETAILS === 'true',
