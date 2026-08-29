@@ -25,10 +25,8 @@ export class PaperExecutor {
   private positionSnapshots: Map<string, PaperPosition[]> = new Map();
 
   public executeSignal(signal: Signal, orderbook: OrderBook): PaperOrder | null {
-    const riskPerTrade = this.balance * (config.maxRiskPerTradePct / 100);
-    const stopDistance = Math.abs(signal.stop - signal.entry) / signal.entry;
-    const size = riskPerTrade / (signal.entry * stopDistance);
-    const positionValue = size * signal.entry;
+    const positionValue = this.balance * (config.positionSizePct / 100);  // 30% от баланса
+    const size = positionValue / signal.entry;
 
     if (size <= 0) {
       logger.warn(`Invalid size for ${signal.symbol}: ${size}`);
