@@ -133,7 +133,7 @@ export class MexcWebSocket {
       const handlers = this.orderBookHandlers.get(symbol) || [];
       handlers.forEach(h => h(orderbook));
       
-      logger.debug(`Received depth for ${symbol}: ${orderbook.bids.length} bids`);
+      //logger.debug(`Received depth for ${symbol}: ${orderbook.bids.length} bids`);
     } else if (channel === 'push.deal' && data && symbol) {
       const trades = Array.isArray(data) ? data : [data];
       
