@@ -16,18 +16,31 @@ export class MexcApi {
   async getSymbols(): Promise<SymbolInfo[]> {
     try {
       const response = await this.client.get('/api/v1/contract/detail');
+      
+      // Логирование для отладки
+      logger.info(`API response: ${response.data.data?.length || 0} contracts`);
+      if (response.data.data?.length > 0) {
+        logger.info(`Sample: ${JSON.stringify(response.data.data[0])}`);
+      }
+      
       return response.data.data
-        .filter((s: any) => s.quoteCoin === 'USDT' && s.state === 1)
+        .filter((s: any) => {
+          // Проверяем разные варианты USDT
+          const isUsdt = s.quoteCoin === 'USDT' || 
+                         s.quote_currency === 'USDT' || 
+                         s.symbol?.includes('USDT');
+          return isUsdt && (s.state === 1 || s.status === 'Enable');
+        })
         .map((s: any) => ({
           symbol: s.symbol,
-          baseAsset: s.baseCoin,
-          quoteAsset: s.quoteCoin,
-          status: s.state === 1 ? '1' : '0',
-          minNotional: parseFloat(s.minVol || '0'),
-          minQty: parseFloat(s.minVol || '0'),
-          maxQty: parseFloat(s.limitMaxVol || '0'),
-          stepSize: parseFloat(s.volScale || '0'),
-          tickSize: parseFloat(s.priceScale || '0'),
+          baseAsset: s.baseCoin || s.base_asset,
+          quoteAsset: s.quoteCoin || s.quote_currency,
+          status: (s.state === 1 || s.status === 'Enable') ? '1' : '0',
+          minNotional: parseFloat(s.minVol || s.min_notional || '0'),
+          minQty: parseFloat(s.minVol || s.min_notional || '0'),
+          maxQty: parseFloat(s.limitMaxVol || s.max_vol || '0'),
+          stepSize: parseFloat(s.volScale || s.vol_scale || '0'),
+          tickSize: parseFloat(s.priceScale || s.price_scale || '0'),
         }));
     } catch (error) {
       logger.error(`Error fetching symbols: ${getErrorMessage(error)}`);
