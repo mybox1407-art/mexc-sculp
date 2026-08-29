@@ -65,15 +65,20 @@ export function calculateExitPrice(position: PaperPosition, orderbook: OrderBook
 export function shouldExitPosition(position: PaperPosition, signal: Signal): boolean {
   const pnlPct = (position.currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1);
 
+  // Проверка TP
   if (pnlPct >= config.tpPct1 || pnlPct >= config.tpPct2) {
     return true;
   }
 
-  const stopDistance = Math.abs(signal.stop - signal.entry) / signal.entry;
-  const currentDistance = Math.abs(position.currentPrice - signal.entry) / signal.entry;
-
-  if (currentDistance >= stopDistance) {
-    return true;
+  // Проверка SL — по направлению!
+  if (position.side === 'BUY') {
+    if (position.currentPrice <= signal.stop) {  // BUY: SL ниже
+      return true;
+    }
+  } else {
+    if (position.currentPrice >= signal.stop) {  // SELL: SL выше
+      return true;
+    }
   }
 
   return false;
