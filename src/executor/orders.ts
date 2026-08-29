@@ -30,18 +30,12 @@ export function simulateOrderFill(order: PaperOrder, orderbook: OrderBook): Pape
   const bestAsk = orderbook.asks[0].price;
 
   let fillPrice: number;
+  
+  // ✅ РЫНОЧНЫЙ ОРДЕР - исполняем всегда по лучшей цене
   if (order.side === 'BUY') {
-    if (order.entryPrice >= bestAsk) {
-      fillPrice = bestAsk;
-    } else {
-      return null;
-    }
+    fillPrice = bestAsk;  // Покупаем по лучшей цене продажи
   } else {
-    if (order.entryPrice <= bestBid) {
-      fillPrice = bestBid;
-    } else {
-      return null;
-    }
+    fillPrice = bestBid;  // Продаём по лучшей цене покупки
   }
 
   const slippage = Math.abs(fillPrice - order.entryPrice) / order.entryPrice;
