@@ -108,7 +108,7 @@ export class MexcWebSocket {
       gzip: false,
     }));
     
-    logger.info(`Subscribed to ${method} for ${symbol.toUpperCase()}`);
+    //logger.info(`Subscribed to ${method} for ${symbol.toUpperCase()}`);
   }
 
   private handleMessage(message: any): void {
