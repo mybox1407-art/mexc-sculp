@@ -11,7 +11,7 @@ export class MexcWebSocket {
   private orderBookHandlers: Map<string, OrderBookHandler[]> = new Map();
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
   private reconnectDelay: number = 5000;
-  private baseUrl: string = 'wss://contract.mexc.com/edge';  // ← правильный URL
+  private baseUrl: string = 'wss://contract.mexc.com/edge';
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
 
@@ -132,6 +132,8 @@ export class MexcWebSocket {
 
       const handlers = this.orderBookHandlers.get(symbol) || [];
       handlers.forEach(h => h(orderbook));
+      
+      logger.debug(`Received depth for ${symbol}: ${orderbook.bids.length} bids`);
     } else if (channel === 'push.deal' && data && symbol) {
       const trades = Array.isArray(data) ? data : [data];
       
