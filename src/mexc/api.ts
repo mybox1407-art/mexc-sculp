@@ -75,7 +75,7 @@ export class MexcApi {
     }
   }
 
-  async getCandles(symbol: string, _interval: string, limit: number = 100): Promise<Candle[]> {
+  async getCandles(symbol: string, _interval: string): Promise<Candle[]> {
     try {
       const response = await this.client.get(`/api/v1/contract/kline/${symbol}`, {
         params: { 
