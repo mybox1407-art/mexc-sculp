@@ -21,7 +21,6 @@ export class MexcApi {
       
       return response.data.data
         .filter((s: any) => {
-          // state: 0 = активный, apiAllowed: true = разрешён API
           const isActive = s.state === 0 || s.state === 1;
           const isApiAllowed = s.apiAllowed !== false;
           const isUsdt = s.quoteCoin === 'USDT' || s.quote_currency === 'USDT';
@@ -79,7 +78,11 @@ export class MexcApi {
   async getCandles(symbol: string, interval: string, limit: number = 100): Promise<Candle[]> {
     try {
       const response = await this.client.get('/api/v1/contract/kline', {
-        params: { symbol, interval: this.mapInterval(interval), limit },
+        params: { 
+          symbol, 
+          interval: '1m',  // ← жёстко 1m для фьючерсов
+          limit 
+        },
       });
       return response.data.data.map((k: any[]) => ({
         symbol,
