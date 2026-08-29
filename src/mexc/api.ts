@@ -8,7 +8,7 @@ export class MexcApi {
 
   constructor() {
     this.client = axios.create({
-      baseURL: 'https://api.mexc.com',  // ← правильный URL
+      baseURL: 'https://api.mexc.com',
       timeout: 10000,
     });
   }
@@ -37,7 +37,7 @@ export class MexcApi {
 
   async getTickers24h(): Promise<Ticker24h[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/ticker/24hr');
+      const response = await this.client.get('/api/v1/contract/ticker');
       return response.data.data.map((t: any) => ({
         symbol: t.symbol,
         priceChange: t.riseFallValue || '0',
