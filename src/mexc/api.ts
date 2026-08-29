@@ -77,30 +77,34 @@ export class MexcApi {
 
   async getCandles(symbol: string, _interval: string, limit: number = 100): Promise<Candle[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/kline', {
+      const response = await this.client.get(`/api/v1/contract/kline/${symbol}`, {
         params: { 
-          symbol, 
-          interval: '1m',
-          limit 
+          interval: 'Min1',
         },
       });
-      return response.data.data.map((k: any[]) => ({
+      
+      const candles = response.data.data || [];
+      
+      return candles.map((k: any) => ({
         symbol,
-        openTime: k[0],
-        open: parseFloat(k[1]),
-        high: parseFloat(k[2]),
-        low: parseFloat(k[3]),
-        close: parseFloat(k[4]),
-        volume: parseFloat(k[5]),
-        closeTime: k[6],
-        quoteAssetVolume: parseFloat(k[6]),
-        numberOfTrades: k[7],
+        openTime: k.time,
+        open: parseFloat(k.open),
+        high: parseFloat(k.high),
+        low: parseFloat(k.low),
+        close: parseFloat(k.close),
+        volume: parseFloat(k.vol),
+        closeTime: k.time,
+        quoteAssetVolume: parseFloat(k.amount),
+        numberOfTrades: 0,
         takerBuyBaseAssetVolume: 0,
         takerBuyQuoteAssetVolume: 0,
       }));
-    } catch (error) {
+    } catch (error: any) {
+      if (error.response) {
+        logger.error(`Candles API error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+      }
       logger.error(`Error fetching candles for ${symbol}: ${getErrorMessage(error)}`);
-      throw error;
+      return [];
     }
   }
 }
