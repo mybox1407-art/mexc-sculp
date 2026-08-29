@@ -3,7 +3,7 @@ import { PaperExecutor } from './executor/paper';
 import { generateSignals } from './signals/generator';
 import { initializeCsvFiles, logScan, logSignal } from './storage/csv';
 import { calculateStats } from './executor/stats';
-import { sendSignalAlert, sendTradeAlert, sendDailyReport, sendErrorAlert } from './telegram/notifier';
+import { sendTradeOpenedAlert, sendTradeClosedAlert, sendDailyReport, sendErrorAlert } from './telegram/notifier';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { sleep } from './utils/helpers';
@@ -36,17 +36,41 @@ async function main() {
 
         for (const signal of signals) {
           logSignal(signal, true);
-          sendSignalAlert(signal);
+          
           const order = executor.executeSignal(signal, token.orderbook);
 
           if (order) {
             logger.info(`Executed signal: ${signal.type} ${signal.symbol} ${signal.side}`);
+            
+            const positionValue = order.size * order.avgFillPrice;
+            sendTradeOpenedAlert(
+              signal,
+              order.size,
+              positionValue,
+              executor.getBalance(),
+              executor.getFreeBalance()
+            );
           }
         }
 
         const result = executor.updatePositions(token.orderbook, token.symbol);
         if (result) {
-          sendTradeAlert(result);
+          let exitReason = 'UNKNOWN';
+          const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
+          if (pnlPct >= config.tpPct2) {
+            exitReason = 'TP2';
+          } else if (pnlPct >= config.tpPct1) {
+            exitReason = 'TP1';
+          } else {
+            exitReason = 'STOP';
+          }
+          
+          sendTradeClosedAlert(
+            result,
+            exitReason,
+            executor.getBalance(),
+            executor.getFreeBalance()
+          );
         }
       }
 
