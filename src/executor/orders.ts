@@ -5,7 +5,6 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 // Комиссии MEXC Futures
-const MAKER_FEE = 0.00008;   // 0.008%
 const TAKER_FEE = 0.00032;   // 0.032%
 
 let orderCounter = 0;
