@@ -4,6 +4,10 @@ import { OrderBook } from '../mexc/types';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+// Комиссии MEXC Futures
+const MAKER_FEE = 0.00008;   // 0.008%
+const TAKER_FEE = 0.00032;   // 0.032%
+
 let orderCounter = 0;
 
 export function createPaperOrder(signal: Signal, size: number): PaperOrder {
@@ -86,7 +90,11 @@ export function shouldExitPosition(position: PaperPosition, signal: Signal): boo
 
 export function calculateTradeResult(position: PaperPosition, exitPrice: number): TradeResult {
   const grossPnl = (exitPrice - position.entryPrice) * position.size * (position.side === 'BUY' ? 1 : -1);
-  const commission = position.entryPrice * position.size * 0.001 + exitPrice * position.size * 0.001;
+  
+  // Комиссия: открытие + закрытие (Taker)
+  const commission = position.entryPrice * position.size * TAKER_FEE + 
+                     exitPrice * position.size * TAKER_FEE;
+  
   const slippage = Math.abs(exitPrice - position.currentPrice) * position.size;
   const pnl = grossPnl - commission - slippage;
   const pnlPct = (pnl / (position.entryPrice * position.size)) * 100;
