@@ -31,8 +31,11 @@ async function main() {
       
       // Обновляем ВСЕ открытые позиции
       for (const position of openPositions) {
+        // Берём orderbook из сканера (если символ ещё там)
         const token = scanner.getScannedTokens().find(t => t.symbol === position.symbol);
+        
         if (token) {
+          // Символ в сканере — обновляем цену
           const result = executor.updatePositions(token.orderbook, token.symbol);
           if (result) {
             let exitReason = 'UNKNOWN';
@@ -51,6 +54,32 @@ async function main() {
               executor.getBalance(),
               executor.getFreeBalance()
             );
+          }
+        } else {
+          // Символ выпал из сканера — используем последний известный orderbook
+          const lastOrderbook = executor.getLastOrderbook(position.symbol);
+          if (lastOrderbook) {
+            const result = executor.updatePositions(lastOrderbook, position.symbol);
+            if (result) {
+              let exitReason = 'UNKNOWN';
+              const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
+              if (pnlPct >= config.tpPct2) {
+                exitReason = 'TP2';
+              } else if (pnlPct >= config.tpPct1) {
+                exitReason = 'TP1';
+              } else {
+                exitReason = 'STOP';
+              }
+              
+              sendTradeClosedAlert(
+                result,
+                exitReason,
+                executor.getBalance(),
+                executor.getFreeBalance()
+              );
+            }
+          } else {
+            logger.debug(`No orderbook for ${position.symbol}, skipping update`);
           }
         }
       }
@@ -84,6 +113,9 @@ async function main() {
       logScan(scannedTokens, Date.now());
 
       for (const token of scannedTokens) {
+        // Кэшируем orderbook для всех символов в сканере
+        executor.cacheOrderbook(token.symbol, token.orderbook);
+        
         const signals = generateSignals(token.candles, token.orderbook, token.atr);
 
         for (const signal of signals) {
