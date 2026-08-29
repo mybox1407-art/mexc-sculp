@@ -23,6 +23,17 @@ export class PaperExecutor {
   private totalSignals: number = 0;
   private totalExecutions: number = 0;
   private positionSnapshots: Map<string, PaperPosition[]> = new Map();
+  private orderBooks: Map<string, OrderBook> = new Map();  // ✅ Кэш orderbook
+
+  // ✅ Кэширование orderbook
+  public cacheOrderbook(symbol: string, orderbook: OrderBook): void {
+    this.orderBooks.set(symbol, orderbook);
+  }
+
+  // ✅ Получение последнего orderbook
+  public getLastOrderbook(symbol: string): OrderBook | null {
+    return this.orderBooks.get(symbol) || null;
+  }
 
   public executeSignal(signal: Signal, orderbook: OrderBook): PaperOrder | null {
     const positionValue = this.balance * (config.positionSizePct / 100);  // 30% от баланса
