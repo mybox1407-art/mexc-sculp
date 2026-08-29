@@ -1,6 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
 import { Ticker24h, SymbolInfo, Candle } from './types';
-import { config } from '../config';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/error';
 
@@ -9,34 +8,27 @@ export class MexcApi {
 
   constructor() {
     this.client = axios.create({
-      baseURL: config.mexcBaseUrl,
+      baseURL: 'https://api.mexc.com',  // ← правильный URL
       timeout: 10000,
     });
   }
 
-  // Заголовки с API ключом
-  private getHeaders(): Record<string, string> {
-    return {
-      'Mexc-Api-Key': config.mexcApiKey,
-    };
-  }
-
   async getSymbols(): Promise<SymbolInfo[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/list', {
-        headers: this.getHeaders(),
-      });
-      return response.data.data.map((s: any) => ({
-        symbol: s.symbol,
-        baseAsset: s.base_currency,
-        quoteAsset: s.quote_currency,
-        status: s.status === 'Enable' ? '1' : '0',
-        minNotional: parseFloat(s.min_leverage || '0'),
-        minQty: parseFloat(s.min_vol || '0'),
-        maxQty: parseFloat(s.max_vol || '0'),
-        stepSize: parseFloat(s.vol_precision || '0'),
-        tickSize: parseFloat(s.price_precision || '0'),
-      }));
+      const response = await this.client.get('/api/v1/contract/detail');
+      return response.data.data
+        .filter((s: any) => s.quoteCoin === 'USDT' && s.state === 1)
+        .map((s: any) => ({
+          symbol: s.symbol,
+          baseAsset: s.baseCoin,
+          quoteAsset: s.quoteCoin,
+          status: s.state === 1 ? '1' : '0',
+          minNotional: parseFloat(s.minVol || '0'),
+          minQty: parseFloat(s.minVol || '0'),
+          maxQty: parseFloat(s.limitMaxVol || '0'),
+          stepSize: parseFloat(s.volScale || '0'),
+          tickSize: parseFloat(s.priceScale || '0'),
+        }));
     } catch (error) {
       logger.error(`Error fetching symbols: ${getErrorMessage(error)}`);
       throw error;
@@ -45,24 +37,22 @@ export class MexcApi {
 
   async getTickers24h(): Promise<Ticker24h[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/ticker/24hr', {
-        headers: this.getHeaders(),
-      });
+      const response = await this.client.get('/api/v1/contract/ticker/24hr');
       return response.data.data.map((t: any) => ({
         symbol: t.symbol,
-        priceChange: t.change_rate || '0',
-        priceChangePercent: t.change_rate || '0',
-        weightedAvgPrice: t.mark_price || '0',
+        priceChange: t.riseFallValue || '0',
+        priceChangePercent: t.riseFallRate || '0',
+        weightedAvgPrice: t.fairPrice || '0',
         prevClosePrice: t.open_price || '0',
         lastPrice: t.last || '0',
         lastQty: '0',
-        bidPrice: t.bid || '0',
-        askPrice: t.ask || '0',
+        bidPrice: t.bid1 || '0',
+        askPrice: t.ask1 || '0',
         openPrice: t.open_price || '0',
-        highPrice: t.high || '0',
-        lowPrice: t.low || '0',
-        volume: t.volume || '0',
-        quoteVolume: t.amount || '0',
+        highPrice: t.high24Price || '0',
+        lowPrice: t.lower24Price || '0',
+        volume: t.volume24 || '0',
+        quoteVolume: t.amount24 || '0',
         openTime: 0,
         closeTime: 0,
         firstId: 0,
@@ -78,7 +68,6 @@ export class MexcApi {
   async getCandles(symbol: string, interval: string, limit: number = 100): Promise<Candle[]> {
     try {
       const response = await this.client.get('/api/v1/contract/kline', {
-        headers: this.getHeaders(),
         params: { symbol, interval: this.mapInterval(interval), limit },
       });
       return response.data.data.map((k: any[]) => ({
