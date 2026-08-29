@@ -18,6 +18,7 @@ export class PaperExecutor {
   private positions: Map<string, PositionTracking> = new Map();
   private tradeResults: TradeResult[] = [];
   private balance: number = 100;
+  private reservedBalance: number = 0;
   private totalScans: number = 0;
   private totalSignals: number = 0;
   private totalExecutions: number = 0;
@@ -27,6 +28,7 @@ export class PaperExecutor {
     const riskPerTrade = this.balance * (config.maxRiskPerTradePct / 100);
     const stopDistance = Math.abs(signal.stop - signal.entry) / signal.entry;
     const size = riskPerTrade / (signal.entry * stopDistance);
+    const positionValue = size * signal.entry;
 
     if (size <= 0) {
       logger.warn(`Invalid size for ${signal.symbol}: ${size}`);
@@ -35,6 +37,12 @@ export class PaperExecutor {
 
     if (this.positions.size >= config.maxPositions) {
       logger.warn(`Max positions reached: ${this.positions.size}`);
+      return null;
+    }
+
+    const freeBalance = this.balance - this.reservedBalance;
+    if (positionValue > freeBalance) {
+      logger.warn(`Insufficient balance for ${signal.symbol}: need ${positionValue}$, have ${freeBalance}$`);
       return null;
     }
 
@@ -49,6 +57,7 @@ export class PaperExecutor {
     this.orders.push(filledOrder);
     this.totalSignals++;
     this.totalExecutions++;
+    this.reservedBalance += positionValue;
 
     const position: PaperPosition = {
       symbol: signal.symbol,
@@ -125,6 +134,7 @@ export class PaperExecutor {
       this.positions.delete(symbol);
       this.positionSnapshots.delete(symbol);
       this.balance += result.pnl;
+      this.reservedBalance -= position.entryPrice * position.size;
 
       logTrade(result, exitReason, tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
 
@@ -150,6 +160,10 @@ export class PaperExecutor {
 
   public getBalance(): number {
     return this.balance;
+  }
+
+  public getFreeBalance(): number {
+    return this.balance - this.reservedBalance;
   }
 
   public getStats(): { totalTrades: number; winRate: number; totalPnl: number; avgPnl: number } {
