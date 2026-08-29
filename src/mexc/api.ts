@@ -6,28 +6,38 @@ import { getErrorMessage } from '../utils/error';
 
 export class MexcApi {
   private client: AxiosInstance;
+  private publicClient: AxiosInstance;  // ← публичный клиент без ключей
 
   constructor() {
     this.client = axios.create({
-      baseURL: config.mexcBaseUrl,  // https://contract.mexc.com
+      baseURL: config.mexcBaseUrl,
+      timeout: 10000,
+    });
+    
+    // Публичный API без ключей
+    this.publicClient = axios.create({
+      baseURL: 'https://api.mexc.com',  // ← публичный спот API
       timeout: 10000,
     });
   }
 
   async getSymbols(): Promise<SymbolInfo[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/list');
-      return response.data.data.map((s: any) => ({
-        symbol: s.symbol,
-        baseAsset: s.base_currency,
-        quoteAsset: s.quote_currency,
-        status: s.status === 'Enable' ? '1' : '0',
-        minNotional: parseFloat(s.min_leverage || '0'),
-        minQty: parseFloat(s.min_vol || '0'),
-        maxQty: parseFloat(s.max_vol || '0'),
-        stepSize: parseFloat(s.vol_precision || '0'),
-        tickSize: parseFloat(s.price_precision || '0'),
-      }));
+      // Используем публичный спот API для получения символов
+      const response = await this.publicClient.get('/api/v3/exchangeInfo');
+      return response.data.symbols
+        .filter((s: any) => s.quoteAsset === 'USDT' && s.status === '1')
+        .map((s: any) => ({
+          symbol: s.symbol,
+          baseAsset: s.baseAsset,
+          quoteAsset: s.quoteAsset,
+          status: s.status,
+          minNotional: parseFloat(s.minNotional || '0'),
+          minQty: parseFloat(s.minQty || '0'),
+          maxQty: parseFloat(s.maxQty || '0'),
+          stepSize: parseFloat(s.stepSize || '0'),
+          tickSize: parseFloat(s.tickSize || '0'),
+        }));
     } catch (error) {
       logger.error(`Error fetching symbols: ${getErrorMessage(error)}`);
       throw error;
@@ -36,27 +46,27 @@ export class MexcApi {
 
   async getTickers24h(): Promise<Ticker24h[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/ticker/24hr');
-      return response.data.data.map((t: any) => ({
+      const response = await this.publicClient.get('/api/v3/ticker/24hr');
+      return response.data.map((t: any) => ({
         symbol: t.symbol,
-        priceChange: t.change_rate || '0',
-        priceChangePercent: t.change_rate || '0',
-        weightedAvgPrice: t.mark_price || '0',
-        prevClosePrice: t.open_price || '0',
-        lastPrice: t.last || '0',
-        lastQty: '0',
-        bidPrice: t.bid || '0',
-        askPrice: t.ask || '0',
-        openPrice: t.open_price || '0',
-        highPrice: t.high || '0',
-        lowPrice: t.low || '0',
-        volume: t.volume || '0',
-        quoteVolume: t.amount || '0',
-        openTime: 0,
-        closeTime: 0,
-        firstId: 0,
-        lastId: 0,
-        count: 0,
+        priceChange: t.priceChange,
+        priceChangePercent: t.priceChangePercent,
+        weightedAvgPrice: t.weightedAvgPrice,
+        prevClosePrice: t.prevClosePrice,
+        lastPrice: t.lastPrice,
+        lastQty: t.lastQty,
+        bidPrice: t.bidPrice,
+        askPrice: t.askPrice,
+        openPrice: t.openPrice,
+        highPrice: t.highPrice,
+        lowPrice: t.lowPrice,
+        volume: t.volume,
+        quoteVolume: t.quoteVolume,
+        openTime: t.openTime,
+        closeTime: t.closeTime,
+        firstId: t.firstId,
+        lastId: t.lastId,
+        count: t.count,
       }));
     } catch (error) {
       logger.error(`Error fetching 24h tickers: ${getErrorMessage(error)}`);
@@ -66,10 +76,10 @@ export class MexcApi {
 
   async getCandles(symbol: string, interval: string, limit: number = 100): Promise<Candle[]> {
     try {
-      const response = await this.client.get('/api/v1/contract/kline', {
-        params: { symbol, interval: this.mapInterval(interval), limit },
+      const response = await this.publicClient.get('/api/v3/klines', {
+        params: { symbol, interval, limit },
       });
-      return response.data.data.map((k: any[]) => ({
+      return response.data.map((k: any[]) => ({
         symbol,
         openTime: k[0],
         open: parseFloat(k[1]),
@@ -78,26 +88,14 @@ export class MexcApi {
         close: parseFloat(k[4]),
         volume: parseFloat(k[5]),
         closeTime: k[6],
-        quoteAssetVolume: parseFloat(k[6]),
-        numberOfTrades: k[7],
-        takerBuyBaseAssetVolume: 0,
-        takerBuyQuoteAssetVolume: 0,
+        quoteAssetVolume: parseFloat(k[7]),
+        numberOfTrades: k[8],
+        takerBuyBaseAssetVolume: parseFloat(k[9]),
+        takerBuyQuoteAssetVolume: parseFloat(k[10]),
       }));
     } catch (error) {
       logger.error(`Error fetching candles for ${symbol}: ${getErrorMessage(error)}`);
       throw error;
     }
-  }
-
-  private mapInterval(interval: string): string {
-    const map: Record<string, string> = {
-      '1m': '1m',
-      '5m': '5m',
-      '15m': '15m',
-      '1h': '1h',
-      '4h': '4h',
-      '1d': '1d',
-    };
-    return map[interval] || '1m';
   }
 }
