@@ -23,6 +23,58 @@ async function main() {
 
     let lastReportTime = Date.now();
     const reportInterval = 24 * 60 * 60 * 1000;
+    const positionCheckInterval = 5000;  // 5 секунд
+
+    // Мониторинг позиций каждые 5 секунд
+    setInterval(() => {
+      const openPositions = executor.getPositions();
+      
+      // Обновляем ВСЕ открытые позиции
+      for (const position of openPositions) {
+        const token = scanner.getScannedTokens().find(t => t.symbol === position.symbol);
+        if (token) {
+          const result = executor.updatePositions(token.orderbook, token.symbol);
+          if (result) {
+            let exitReason = 'UNKNOWN';
+            const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
+            if (pnlPct >= config.tpPct2) {
+              exitReason = 'TP2';
+            } else if (pnlPct >= config.tpPct1) {
+              exitReason = 'TP1';
+            } else {
+              exitReason = 'STOP';
+            }
+            
+            sendTradeClosedAlert(
+              result,
+              exitReason,
+              executor.getBalance(),
+              executor.getFreeBalance()
+            );
+          }
+        }
+      }
+      
+      // Лог открытых позиций
+      if (openPositions.length > 0) {
+        logger.info(`📊 Open positions: ${openPositions.length}`);
+        for (const pos of openPositions) {
+          const pnlPct = (pos.currentPrice - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? 1 : -1);
+          const pnl = pos.unrealizedPnl;
+          const slDist = ((pos.signal.stop - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? -1 : 1)).toFixed(2);
+          const tpDist = ((pos.signal.target - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? 1 : -1)).toFixed(2);
+          
+          logger.info(
+            `${pos.symbol} | ${pos.side} | ` +
+            `Entry: ${pos.entryPrice.toFixed(4)} → Current: ${pos.currentPrice.toFixed(4)} | ` +
+            `PnL: ${pnl.toFixed(2)}$ (${pnlPct.toFixed(2)}%) | ` +
+            `SL: ${slDist}% | TP: ${tpDist}%`
+          );
+        }
+      } else {
+        logger.info('📊 No open positions');
+      }
+    }, positionCheckInterval);
 
     while (true) {
       const scannedTokens = scanner.getScannedTokens();
@@ -51,26 +103,6 @@ async function main() {
               executor.getFreeBalance()
             );
           }
-        }
-
-        const result = executor.updatePositions(token.orderbook, token.symbol);
-        if (result) {
-          let exitReason = 'UNKNOWN';
-          const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
-          if (pnlPct >= config.tpPct2) {
-            exitReason = 'TP2';
-          } else if (pnlPct >= config.tpPct1) {
-            exitReason = 'TP1';
-          } else {
-            exitReason = 'STOP';
-          }
-          
-          sendTradeClosedAlert(
-            result,
-            exitReason,
-            executor.getBalance(),
-            executor.getFreeBalance()
-          );
         }
       }
 
