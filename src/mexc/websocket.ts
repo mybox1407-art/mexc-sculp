@@ -11,7 +11,7 @@ export class MexcWebSocket {
   private orderBookHandlers: Map<string, OrderBookHandler[]> = new Map();
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
   private reconnectDelay: number = 5000;
-  private baseUrl: string = 'wss://futures.mexc.com/ws';  // ← фьючерсный URL
+  private baseUrl: string = 'wss://contract.mexc.com/ws';  // ← фьючерсы
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
 
@@ -104,7 +104,7 @@ export class MexcWebSocket {
     
     this.ws.send(JSON.stringify({
       method,
-      param: { symbol: symbol.toUpperCase() },  // ← uppercase для фьючерсов
+      param: { symbol: symbol.toUpperCase() },
       gzip: false,
     }));
     
@@ -127,24 +127,28 @@ export class MexcWebSocket {
           price: parseFloat(a[0]),
           size: parseFloat(a[1]),
         })),
-        timestamp: Date.now(),
+        timestamp: data.timestamp || Date.now(),
       };
 
       const handlers = this.orderBookHandlers.get(symbol) || [];
       handlers.forEach(h => h(orderbook));
     } else if (channel === 'push.deal' && data && symbol) {
-      const trade: Trade = {
-        symbol,
-        id: data.id || Date.now(),
-        price: parseFloat(data.price || 0),
-        qty: parseFloat(data.qty || 0),
-        quoteQty: parseFloat(data.amount || 0),
-        time: data.timestamp || Date.now(),
-        isBuyerMaker: data.direction === 'SELL',
-      };
+      const trades = Array.isArray(data) ? data : [data];
+      
+      for (const tradeData of trades) {
+        const trade: Trade = {
+          symbol,
+          id: tradeData.id || Date.now(),
+          price: parseFloat(tradeData.price || 0),
+          qty: parseFloat(tradeData.vol || 0),
+          quoteQty: parseFloat(tradeData.amount || 0),
+          time: tradeData.ts || Date.now(),
+          isBuyerMaker: tradeData.side === 'Buy',
+        };
 
-      const handlers = this.tradeHandlers.get(symbol) || [];
-      handlers.forEach(h => h(trade));
+        const handlers = this.tradeHandlers.get(symbol) || [];
+        handlers.forEach(h => h(trade));
+      }
     }
   }
 
