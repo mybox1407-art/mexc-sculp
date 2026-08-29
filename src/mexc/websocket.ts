@@ -11,7 +11,7 @@ export class MexcWebSocket {
   private orderBookHandlers: Map<string, OrderBookHandler[]> = new Map();
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
   private reconnectDelay: number = 5000;
-  private baseUrl: string = 'wss://contract.mexc.com/ws';  // ← фьючерсы
+  private baseUrl: string = 'wss://contract.mexc.com/edge';  // ← правильный URL
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
 
