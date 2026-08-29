@@ -1,5 +1,4 @@
 import axios, { AxiosInstance } from 'axios';
-import crypto from 'crypto';
 import { Ticker24h, SymbolInfo, Candle } from './types';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -10,23 +9,9 @@ export class MexcApi {
 
   constructor() {
     this.client = axios.create({
-      baseURL: config.mexcBaseUrl,  // https://contract.mexc.com
+      baseURL: config.mexcBaseUrl,
       timeout: 10000,
     });
-  }
-
-  // Подпись запроса
-  private signQuery(params: Record<string, any>): string {
-    const queryString = Object.entries(params)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('&');
-    
-    const signature = crypto
-      .createHmac('sha256', config.mexcApiSecret)
-      .update(queryString)
-      .digest('hex');
-    
-    return `${queryString}&signature=${signature}`;
   }
 
   // Заголовки с API ключом
