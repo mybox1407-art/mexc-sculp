@@ -121,7 +121,7 @@ export class Scanner {
       let candles: Candle[] = this.candles.get(symbol) || [];
       if (candles.length === 0) {
         try {
-          candles = await this.mexcApi.getCandles(symbol, '1m', 100);
+          candles = await this.mexcApi.getCandles(symbol, '1m');
           this.candles.set(symbol, candles);
         } catch (error) {
           continue;
