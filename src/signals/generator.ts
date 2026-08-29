@@ -11,7 +11,11 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   if (deviation > atr * config.atrMultiple / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     const target = vwap;
-    const stop = side === 'BUY' ? vwap - atr * config.slAtrMultiple : vwap + atr * config.slAtrMultiple;
+    
+    // SL от entry, а не от VWAP!
+    const stop = side === 'BUY' 
+      ? currentPrice - atr * config.slAtrMultiple  // BUY: SL ниже входа
+      : currentPrice + atr * config.slAtrMultiple; // SELL: SL выше входа
 
     return {
       type: 'VWAP_MEAN_REVERSION',
