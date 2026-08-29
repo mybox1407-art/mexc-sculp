@@ -1,7 +1,37 @@
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+export interface Config {
+  mexcApiKey: string;
+  mexcApiSecret: string;
+  mexcBaseUrl: string;
+  telegramBotToken: string;
+  telegramChatId: string;
+  logToCsv: boolean;
+  csvOutputPath: string;
+  scanIntervalMs: number;
+  minDepthUsd: number;
+  maxSpreadPct: number;
+  minAtr1m: number;
+  min24hChangePct: number;
+  atrMultiple: number;
+  tpPct1: number;
+  tpPct2: number;
+  slAtrMultiple: number;
+  maxRiskPerTradePct: number;
+  maxPositions: number;
+  paperTrading: boolean;
+  logLevel: string;
+  logScannerDetails: boolean;
+  logSignalDetails: boolean;
+  logExecutionDetails: boolean;
+}
+
 export const config: Config = {
   mexcApiKey: process.env.MEXC_API_KEY || '',
   mexcApiSecret: process.env.MEXC_API_SECRET || '',
-  mexcBaseUrl: process.env.MEXC_BASE_URL || 'https://contract.mexc.com',  // ← фьючерсы
+  mexcBaseUrl: process.env.MEXC_BASE_URL || 'https://contract.mexc.com',
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   logToCsv: process.env.LOG_TO_CSV !== 'false',
