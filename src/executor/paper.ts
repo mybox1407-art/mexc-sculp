@@ -11,6 +11,10 @@ export interface PositionTracking {
   highestUnrealizedPnl: number;
   lowestUnrealizedPnl: number;
   lastUpdate: number;
+  // ✅ Для частичной фиксации
+  partialExitDone: boolean;
+  trailingActive: boolean;
+  trailingStop?: number;
 }
 
 export interface CooldownInfo {
@@ -118,6 +122,9 @@ export class PaperExecutor {
       highestUnrealizedPnl: 0,
       lowestUnrealizedPnl: 0,
       lastUpdate: Date.now(),
+      partialExitDone: false,
+      trailingActive: false,
+      trailingStop: undefined,
     });
 
     this.positionSnapshots.set(signal.symbol, [position]);
@@ -153,24 +160,148 @@ export class PaperExecutor {
 
     logPosition(position);
 
-    if (shouldExitPosition(position, position.signal)) {
+    // ✅ Time-based exit: закрываем через N минут, если цена не пошла в пользу
+    const maxHoldMinutes = config.maxHoldMinutes || 10;
+    const holdMinutes = (Date.now() - position.openTimestamp) / 1000 / 60;
+
+    if (holdMinutes > maxHoldMinutes && position.unrealizedPnl < 0) {
+      logger.info(`Time-based exit for ${symbol}: held ${holdMinutes.toFixed(1)} min > ${maxHoldMinutes} min, PnL=${position.unrealizedPnl.toFixed(2)}`);
+      const exitPrice = calculateExitPrice(position, orderbook);
+      const result = calculateTradeResult(position, exitPrice);
+      
+      this.tradeResults.push(result);
+      this.positions.delete(symbol);
+      this.positionSnapshots.delete(symbol);
+      this.balance += result.pnl;
+      this.reservedBalance -= position.entryPrice * position.size;
+
+      if (result.pnl < 0) {
+        this.cooldowns.set(symbol, {
+          until: Date.now() + 15 * 60 * 1000,
+          reason: 'LOSS',
+        });
+        logger.info(`Cooldown set for ${symbol}: 15 minutes after loss`);
+      }
+
+      const avgHoldTime = this.tradeResults.length > 0
+        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
+        : holdMinutes;
+
+      logTrade(result, 'TIME_EXIT', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TIME_EXIT`);
+
+      return result;
+    }
+
+    // ✅ Трейлинг-стоп после TP1
+    const targetPnl1 = position.size * position.signal.atr * config.tpPct1;
+    if (position.unrealizedPnl >= targetPnl1 && !tracking.trailingActive) {
+      tracking.trailingActive = true;
+      tracking.trailingStop = position.side === 'BUY'
+        ? position.entryPrice + position.signal.atr * 0.3
+        : position.entryPrice - position.signal.atr * 0.3;
+      logger.info(`Trailing stop activated for ${symbol}: ${tracking.trailingStop.toFixed(4)}`);
+    }
+
+    // Проверка трейлинг-стопа
+    if (tracking.trailingActive && tracking.trailingStop) {
+      const hitTrailingStop = position.side === 'BUY'
+        ? currentPrice <= tracking.trailingStop
+        : currentPrice >= tracking.trailingStop;
+
+      if (hitTrailingStop) {
+        logger.info(`Trailing stop hit for ${symbol} at ${currentPrice.toFixed(4)}`);
+        const exitPrice = calculateExitPrice(position, orderbook);
+        const result = calculateTradeResult(position, exitPrice);
+        
+        this.tradeResults.push(result);
+        this.positions.delete(symbol);
+        this.positionSnapshots.delete(symbol);
+        this.balance += result.pnl;
+        this.reservedBalance -= position.entryPrice * position.size;
+
+        if (result.pnl < 0) {
+          this.cooldowns.set(symbol, {
+            until: Date.now() + 15 * 60 * 1000,
+            reason: 'LOSS',
+          });
+        }
+
+        const avgHoldTime = this.tradeResults.length > 0
+          ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
+          : (Date.now() - position.openTimestamp) / 1000 / 60;
+
+        logTrade(result, 'TRAILING', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+        logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TRAILING`);
+
+        return result;
+      }
+    }
+
+    // ✅ Частичная фиксация на TP1 (50% позиции)
+    const targetPnl1Full = position.size * position.signal.atr * config.tpPct1;
+    const targetPnl2 = position.size * position.signal.atr * config.tpPct2;
+
+    if (!tracking.partialExitDone && position.unrealizedPnl >= targetPnl1Full) {
+      tracking.partialExitDone = true;
+
+      // Закрыть 50% позиции
+      const partialSize = position.size * config.partialExitPct;
+      const partialPnl = position.unrealizedPnl * config.partialExitPct;
+      
+      const partialTrade: TradeResult = {
+        symbol: position.symbol,
+        side: position.side,
+        entryPrice: position.entryPrice,
+        exitPrice: currentPrice,
+        size: partialSize,
+        pnl: partialPnl,
+        pnlPct: (currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1),
+        openTimestamp: position.openTimestamp,
+        closeTimestamp: Date.now(),
+        fees: 0,
+      };
+
+      this.tradeResults.push(partialTrade);
+      position.realizedPnl += partialPnl;
+      position.size *= (1 - config.partialExitPct);  // Оставить 50%
+      this.reservedBalance -= position.entryPrice * partialSize;  // Освободить часть резерва
+
+      logger.info(`Partial exit for ${symbol}: closed ${partialSize.toFixed(4)} (${config.partialExitPct * 100}%), PnL=${partialPnl.toFixed(2)}`);
+
+      const avgHoldTime = this.tradeResults.length > 0
+        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
+        : (Date.now() - position.openTimestamp) / 1000 / 60;
+
+      logTrade(partialTrade, 'TP1_PARTIAL', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+    }
+
+    // Проверка TP2 (закрыть остаток)
+    if (position.unrealizedPnl >= targetPnl2) {
       const exitPrice = calculateExitPrice(position, orderbook);
       const result = calculateTradeResult(position, exitPrice);
 
-      let exitReason = 'UNKNOWN';
-      const pnlPct = (position.currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1);
-      if (pnlPct >= config.tpPct2) {
-        exitReason = 'TP2';
-      } else if (pnlPct >= config.tpPct1) {
-        exitReason = 'TP1';
-      } else {
-        exitReason = 'STOP';
-      }
+      this.tradeResults.push(result);
+      this.positions.delete(symbol);
+      this.positionSnapshots.delete(symbol);
+      this.balance += result.pnl;
+      this.reservedBalance -= position.entryPrice * position.size;
 
-      const durationMinutes = (Date.now() - position.openTimestamp) / 1000 / 60;
       const avgHoldTime = this.tradeResults.length > 0
         ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
-        : durationMinutes;
+        : (Date.now() - position.openTimestamp) / 1000 / 60;
+
+      logTrade(result, 'TP2', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TP2`);
+
+      return result;
+    }
+
+    // Проверка стоп-лосса
+    const hitStop = shouldExitPosition(position, position.signal);
+    if (hitStop) {
+      const exitPrice = calculateExitPrice(position, orderbook);
+      const result = calculateTradeResult(position, exitPrice);
 
       this.tradeResults.push(result);
       this.positions.delete(symbol);
@@ -186,9 +317,12 @@ export class PaperExecutor {
         logger.info(`Cooldown set for ${symbol}: 15 minutes after loss`);
       }
 
-      logTrade(result, exitReason, tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+      const avgHoldTime = this.tradeResults.length > 0
+        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
+        : (Date.now() - position.openTimestamp) / 1000 / 60;
 
-      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: ${exitReason}`);
+      logTrade(result, 'STOP', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: STOP`);
 
       return result;
     }
