@@ -23,19 +23,15 @@ async function main() {
 
     let lastReportTime = Date.now();
     const reportInterval = 24 * 60 * 60 * 1000;
-    const positionCheckInterval = 2000;  // было 5 секунд
+    const positionCheckInterval = 2000;
 
-    // Мониторинг позиций каждые 5 секунд
     setInterval(() => {
       const openPositions = executor.getPositions();
       
-      // Обновляем ВСЕ открытые позиции
       for (const position of openPositions) {
-        // Берём orderbook из сканера (если символ ещё там)
         const token = scanner.getScannedTokens().find(t => t.symbol === position.symbol);
         
         if (token) {
-          // Символ в сканере — обновляем цену
           const result = executor.updatePositions(token.orderbook, token.symbol);
           if (result) {
             let exitReason = 'UNKNOWN';
@@ -56,7 +52,6 @@ async function main() {
             );
           }
         } else {
-          // Символ выпал из сканера — используем последний известный orderbook
           const lastOrderbook = executor.getLastOrderbook(position.symbol);
           if (lastOrderbook) {
             const result = executor.updatePositions(lastOrderbook, position.symbol);
@@ -84,7 +79,6 @@ async function main() {
         }
       }
       
-      // Лог открытых позиций
       if (openPositions.length > 0) {
         logger.info(`📊 Open positions: ${openPositions.length}`);
         for (const pos of openPositions) {
@@ -113,13 +107,11 @@ async function main() {
       logScan(scannedTokens, Date.now());
 
       for (const token of scannedTokens) {
-        // Кэшируем orderbook для всех символов в сканере
         executor.cacheOrderbook(token.symbol, token.orderbook);
         
         const signals = generateSignals(token.candles, token.orderbook, token.atr);
 
         for (const signal of signals) {
-          // ✅ Проверка: позиция уже открыта или cooldown
           if (executor.hasOpenPosition(signal.symbol)) {
             logger.debug(`Position already open for ${signal.symbol}, skipping signal`);
             continue;
@@ -143,7 +135,8 @@ async function main() {
               order.size,
               positionValue,
               executor.getBalance(),
-              executor.getFreeBalance()
+              executor.getFreeBalance(),
+              signal.type
             );
           }
         }
