@@ -5,6 +5,7 @@ import { calculateDepth, calculateSpreadPct, calculateVolatilityMetrics } from '
 import { detectWalls, detectVolumeMismatch, detectRevivalPattern, isTokenSupported } from './filter';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/error';
 
 export interface ScannedToken {
   symbol: string;
@@ -92,7 +93,7 @@ export class Scanner {
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
     try {
       const response = await fetch(`${config.mexcBaseUrl}/api/v1/depth?symbol=${symbol}&limit=5`);
-      const data = await response.json();
+      const data: any = await response.json();
       
       return {
         symbol,
