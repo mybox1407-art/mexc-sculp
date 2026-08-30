@@ -25,6 +25,22 @@ async function main() {
     const reportInterval = 24 * 60 * 60 * 1000;
     const positionCheckInterval = 2000;
 
+    // ✅ Polling orderbook для открытых позиций (раз в 2 секунды)
+    setInterval(async () => {
+      const openPositions = executor.getPositions();
+      
+      for (const position of openPositions) {
+        try {
+          const orderbook = await scanner.getOrderbookFromApi(position.symbol);
+          if (orderbook) {
+            executor.cacheOrderbook(position.symbol, orderbook);
+          }
+        } catch (error) {
+          logger.debug(`Failed to fetch orderbook for ${position.symbol}: ${getErrorMessage(error)}`);
+        }
+      }
+    }, 2000);
+
     // ✅ Обновление позиций раз в 2 секунды
     setInterval(() => {
       const openPositions = executor.getPositions();
