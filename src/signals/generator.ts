@@ -60,7 +60,7 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
 }
 
 // ✅ SPREAD_SCALP отключён - стратегия показывает убыточные результаты
-export function generateSpreadScalpSignal(candles: Candle[], orderbook: OrderBook, atr: number): Signal | null {
+export function generateSpreadScalpSignal(_candles: Candle[], _orderbook: OrderBook, _atr: number): Signal | null {
   logger.debug(`SPREAD_SCALP strategy disabled, skipping`);
   return null;
 }
