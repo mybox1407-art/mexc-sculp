@@ -239,7 +239,6 @@ export class PaperExecutor {
 
     // ✅ Частичная фиксация на TP1 (50% позиции)
     const targetPnl1Full = position.size * position.signal.atr * config.tpPct1;
-    const targetPnl2Full = position.size * position.signal.atr * config.tpPct2;
 
     if (!tracking.partialExitDone && position.unrealizedPnl >= targetPnl1Full) {
       tracking.partialExitDone = true;
@@ -268,16 +267,20 @@ export class PaperExecutor {
       position.size *= (1 - config.partialExitPct);
       this.reservedBalance -= position.entryPrice * partialSize;
 
-      logger.info(`Partial exit for ${symbol}: closed ${partialSize.toFixed(4)} (${config.partialExitPct * 100}%), PnL=${partialPnl.toFixed(2)}`);
+      logger.info(`Partial exit for ${symbol}: closed ${partialSize.toFixed(4)} (${config.partialExitPct * 100}%), PnL=${partialPnl.toFixed(2)}, remaining=${position.size.toFixed(4)}`);
 
       const avgHoldTime = this.tradeResults.length > 0
         ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
         : (Date.now() - position.openTimestamp) / 1000 / 60;
 
       logTrade(partialTrade, 'TP1_PARTIAL', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+      
+      // ✅ Возвращаем null — не проверяем TP2 в том же тике
+      return null;
     }
 
-    // Проверка TP2 (закрыть остаток)
+    // ✅ Проверка TP2 — вычисляем targetPnl2Full после уменьшения size
+    const targetPnl2Full = position.size * position.signal.atr * config.tpPct2;
     if (position.unrealizedPnl >= targetPnl2Full) {
       const exitPrice = calculateExitPrice(position, orderbook);
       const result = calculateTradeResult(position, exitPrice);
@@ -300,7 +303,7 @@ export class PaperExecutor {
         : (Date.now() - position.openTimestamp) / 1000 / 60;
 
       logTrade(result, 'TP2', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
-      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TP2`);
+      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TP2 | Size: ${position.size.toFixed(4)}`);
 
       return result;
     }
