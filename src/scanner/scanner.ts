@@ -88,6 +88,24 @@ export class Scanner {
     this.mexcWs.subscribeTrades(symbol, tradeHandler);
   }
 
+  // ✅ Polling orderbook через REST API для открытых позиций
+  public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
+    try {
+      const response = await fetch(`${config.mexcBaseUrl}/api/v1/depth?symbol=${symbol}&limit=5`);
+      const data = await response.json();
+      
+      return {
+        symbol,
+        bids: (data.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
+        asks: (data.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
+        timestamp: Date.now(),
+      };
+    } catch (error) {
+      logger.debug(`Failed to fetch orderbook for ${symbol}: ${getErrorMessage(error)}`);
+      return null;
+    }
+  }
+
   public async scan(): Promise<ScannedToken[]> {
     logger.info('Running scan...');
     
