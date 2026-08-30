@@ -9,7 +9,7 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   const deviation = Math.abs(currentPrice - vwap) / vwap;
 
   // ✅ Ужесточено: ×1.5 строже
-  if (deviation > atr * config.atrMultiple * 1.5 / vwap) {
+  if (deviation > atr * config.atrMultiple * 2 / vwap) { //было 1.5
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     const target = vwap;
     
