@@ -28,45 +28,39 @@ export class PaperExecutor {
   private totalSignals: number = 0;
   private totalExecutions: number = 0;
   private positionSnapshots: Map<string, PaperPosition[]> = new Map();
-  private orderBooks: Map<string, OrderBook> = new Map();  // ✅ Кэш orderbook
-  private cooldowns: Map<string, CooldownInfo> = new Map();  // ✅ Cooldown после убытка
+  private orderBooks: Map<string, OrderBook> = new Map();
+  private cooldowns: Map<string, CooldownInfo> = new Map();
 
-  // ✅ Кэширование orderbook
   public cacheOrderbook(symbol: string, orderbook: OrderBook): void {
     this.orderBooks.set(symbol, orderbook);
   }
 
-  // ✅ Получение последнего orderbook
   public getLastOrderbook(symbol: string): OrderBook | null {
     return this.orderBooks.get(symbol) || null;
   }
 
-  // ✅ Проверка cooldown
   public isOnCooldown(symbol: string): boolean {
     const cooldown = this.cooldowns.get(symbol);
     if (!cooldown) return false;
     
     if (Date.now() >= cooldown.until) {
-      this.cooldowns.delete(symbol);  // Cooldown истёк
+      this.cooldowns.delete(symbol);
       return false;
     }
     
     return true;
   }
 
-  // ✅ Проверка: есть ли открытая позиция по тикеру
   public hasOpenPosition(symbol: string): boolean {
     return this.positions.has(symbol);
   }
 
   public executeSignal(signal: Signal, orderbook: OrderBook): PaperOrder | null {
-    // ✅ Проверка 1: Только одна позиция на тикер
     if (this.hasOpenPosition(signal.symbol)) {
       logger.debug(`Position already open for ${signal.symbol}, skipping`);
       return null;
     }
 
-    // ✅ Проверка 2: Cooldown после убытка
     if (this.isOnCooldown(signal.symbol)) {
       const cooldown = this.cooldowns.get(signal.symbol)!;
       const remaining = Math.round((cooldown.until - Date.now()) / 1000);
@@ -74,7 +68,7 @@ export class PaperExecutor {
       return null;
     }
 
-    const positionValue = this.balance * (config.positionSizePct / 100);  // 30% от баланса
+    const positionValue = this.balance * (config.positionSizePct / 100);
     const size = positionValue / signal.entry;
 
     if (size <= 0) {
@@ -116,6 +110,7 @@ export class PaperExecutor {
       realizedPnl: 0,
       signal,
       openTimestamp: Date.now(),
+      strategyType: signal.type,
     };
 
     this.positions.set(signal.symbol, {
@@ -183,10 +178,9 @@ export class PaperExecutor {
       this.balance += result.pnl;
       this.reservedBalance -= position.entryPrice * position.size;
 
-      // ✅ Устанавливаем cooldown после убытка
       if (result.pnl < 0) {
         this.cooldowns.set(symbol, {
-          until: Date.now() + 15 * 60 * 1000,  // 15 минут
+          until: Date.now() + 15 * 60 * 1000,
           reason: 'LOSS',
         });
         logger.info(`Cooldown set for ${symbol}: 15 minutes after loss`);
