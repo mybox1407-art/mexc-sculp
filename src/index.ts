@@ -119,6 +119,17 @@ async function main() {
         const signals = generateSignals(token.candles, token.orderbook, token.atr);
 
         for (const signal of signals) {
+          // ✅ Проверка: позиция уже открыта или cooldown
+          if (executor.hasOpenPosition(signal.symbol)) {
+            logger.debug(`Position already open for ${signal.symbol}, skipping signal`);
+            continue;
+          }
+          
+          if (executor.isOnCooldown(signal.symbol)) {
+            logger.debug(`Cooldown active for ${signal.symbol}, skipping signal`);
+            continue;
+          }
+          
           logSignal(signal, true);
           
           const order = executor.executeSignal(signal, token.orderbook);
