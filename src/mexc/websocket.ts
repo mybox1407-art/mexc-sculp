@@ -133,9 +133,7 @@ export class MexcWebSocket {
       const handlers = this.orderBookHandlers.get(symbol) || [];
       handlers.forEach(h => h(orderbook));
       
-      // ✅ Логирование каждого обновления orderbook
-      logger.debug(`[WS] ${symbol} OB: bid=${orderbook.bids[0].price}, ask=${orderbook.asks[0].price}, bids=${orderbook.bids.length}, asks=${orderbook.asks.length}`);
-      
+      //logger.debug(`Received depth for ${symbol}: ${orderbook.bids.length} bids`);
     } else if (channel === 'push.deal' && data && symbol) {
       const trades = Array.isArray(data) ? data : [data];
       
@@ -153,9 +151,6 @@ export class MexcWebSocket {
         const handlers = this.tradeHandlers.get(symbol) || [];
         handlers.forEach(h => h(trade));
       }
-      
-      // ✅ Логирование trades
-      logger.debug(`[WS] ${symbol} trades: ${trades.length} deals`);
     }
   }
 
