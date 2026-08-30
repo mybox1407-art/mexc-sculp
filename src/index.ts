@@ -25,6 +25,7 @@ async function main() {
     const reportInterval = 24 * 60 * 60 * 1000;
     const positionCheckInterval = 2000;
 
+    // ✅ Обновление позиций раз в 2 секунды
     setInterval(() => {
       const openPositions = executor.getPositions();
       
@@ -32,7 +33,7 @@ async function main() {
         const token = scanner.getScannedTokens().find(t => t.symbol === position.symbol);
         
         if (token) {
-          const result = executor.updatePositions(token.orderbook, token.symbol);
+          const result = executor.updatePositions(token.orderbook, position.symbol);
           if (result) {
             let exitReason = 'UNKNOWN';
             const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
@@ -79,6 +80,7 @@ async function main() {
         }
       }
       
+      // ✅ Логирование открытых позиций раз в 2 секунды
       if (openPositions.length > 0) {
         logger.info(`📊 Open positions: ${openPositions.length}`);
         for (const pos of openPositions) {
@@ -99,6 +101,7 @@ async function main() {
       }
     }, positionCheckInterval);
 
+    // ✅ Основной цикл сканера (раз в 60 сек)
     while (true) {
       const scannedTokens = scanner.getScannedTokens();
       logger.info(`Scanned tokens: ${scannedTokens.length}`);
