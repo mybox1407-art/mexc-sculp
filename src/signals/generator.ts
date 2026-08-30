@@ -59,30 +59,9 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   return null;
 }
 
+// ✅ SPREAD_SCALP отключён - стратегия показывает убыточные результаты
 export function generateSpreadScalpSignal(candles: Candle[], orderbook: OrderBook, atr: number): Signal | null {
-  const bestBid = orderbook.bids[0].price;
-  const bestAsk = orderbook.asks[0].price;
-  const spread = bestAsk - bestBid;
-  const minSpread = atr * 0.5;
-
-  if (spread >= minSpread && orderbook.bids[0].size > orderbook.asks[0].size * 1.5) {
-    const entry = bestBid;
-    const target = bestAsk;
-    const stop = bestBid - atr * config.slAtrMultiple;
-
-    return {
-      type: 'SPREAD_SCALP',
-      symbol: candles[0].symbol,
-      side: 'BUY',
-      entry,
-      target,
-      stop,
-      timestamp: Date.now(),
-      atr,
-      confidence: 0.6,
-    };
-  }
-
+  logger.debug(`SPREAD_SCALP strategy disabled, skipping`);
   return null;
 }
 
@@ -135,8 +114,9 @@ export function generateSignals(candles: Candle[], orderbook: OrderBook, atr: nu
   const vwapSignal = generateVWAPSignal(candles, orderbook, atr);
   if (vwapSignal) signals.push(vwapSignal);
 
-  const spreadSignal = generateSpreadScalpSignal(candles, orderbook, atr);
-  if (spreadSignal) signals.push(spreadSignal);
+  // ✅ SPREAD_SCALP отключён
+  // const spreadSignal = generateSpreadScalpSignal(candles, orderbook, atr);
+  // if (spreadSignal) signals.push(spreadSignal);
 
   const sweepSignal = generateLiquiditySweepSignal(candles, orderbook, atr);
   if (sweepSignal) signals.push(sweepSignal);
