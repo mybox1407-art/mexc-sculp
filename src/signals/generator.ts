@@ -2,14 +2,22 @@ import { Signal } from './types';
 import { calculateVWAP, calculateSupportResistance, calculateMidPrice } from './indicators';
 import { OrderBook, Candle } from '../mexc/types';
 import { config } from '../config';
+import { logger } from '../utils/logger';
 
 export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr: number): Signal | null {
+  // ✅ Фильтр по объёму: мин. средний объём за 20 свечей
+  const avgVolume = candles.slice(-20).reduce((s, c) => s + c.volume, 0) / 20;
+  if (avgVolume < config.minAvgVolume) {
+    logger.debug(`Volume filter: ${candles[0]?.symbol} avgVolume=${avgVolume.toFixed(2)} < ${config.minAvgVolume}`);
+    return null;
+  }
+
   const vwap = calculateVWAP(candles);
   const currentPrice = calculateMidPrice(orderbook.bids[0].price, orderbook.asks[0].price);
   const deviation = Math.abs(currentPrice - vwap) / vwap;
 
-  // ✅ Ужесточено: ×1.5 строже
-  if (deviation > atr * config.atrMultiple * 2 / vwap) { //было 1.5
+  // ✅ Ужесточено: ×2 ATR вместо ×1.5
+  if (deviation > atr * config.atrMultiple * 2 / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     const target = vwap;
     
