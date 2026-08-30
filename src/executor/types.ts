@@ -24,6 +24,7 @@ export interface PaperPosition {
   realizedPnl: number;
   signal: Signal;
   openTimestamp: number;
+  strategyType: string;
 }
 
 export interface TradeResult {
