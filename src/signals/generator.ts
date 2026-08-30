@@ -16,8 +16,8 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   const currentPrice = calculateMidPrice(orderbook.bids[0].price, orderbook.asks[0].price);
   const deviation = Math.abs(currentPrice - vwap) / vwap;
 
-  // ✅ Ужесточено: ×2 ATR вместо ×1.5
-  if (deviation > atr * config.atrMultiple * 2 / vwap) {
+  // ✅ Вход: ×1.5 ATR (расслаблено с ×2)
+  if (deviation > atr * config.atrMultiple * 1.5 / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     
     // ✅ MFE фильтр: проверка距离 до support/resistance
@@ -25,31 +25,14 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
     const distanceToResistance = (resistance - currentPrice) / currentPrice;
     const distanceToSupport = (currentPrice - support) / currentPrice;
     
-    // Если цена ближе 0.5% к уровню — пропускать сигнал
-    if (side === 'BUY' && distanceToResistance < 0.005) {
+    // Если цена ближе 1% к уровню — пропускать сигнал (расслаблено с 0.5%)
+    if (side === 'BUY' && distanceToResistance < 0.01) {
       logger.debug(`MFE filter: ${candles[0]?.symbol} too close to resistance (${(distanceToResistance * 100).toFixed(2)}%)`);
       return null;
     }
-    if (side === 'SELL' && distanceToSupport < 0.005) {
+    if (side === 'SELL' && distanceToSupport < 0.01) {
       logger.debug(`MFE filter: ${candles[0]?.symbol} too close to support (${(distanceToSupport * 100).toFixed(2)}%)`);
       return null;
-    }
-
-    // ✅ Momentum фильтр: проверка направления цены (последние 3 свечи)
-    const recentCandles = candles.slice(-3);
-    if (recentCandles.length >= 3) {
-      const firstClose = recentCandles[0].close;
-      const lastClose = recentCandles[2].close;
-      
-      // Если цена уже разворачивается в нашу сторону — пропускать (ждать дальше)
-      if (side === 'BUY' && lastClose < firstClose) {
-        logger.debug(`Momentum filter: ${candles[0]?.symbol} price already reversing up, skipping BUY`);
-        return null;
-      }
-      if (side === 'SELL' && lastClose > firstClose) {
-        logger.debug(`Momentum filter: ${candles[0]?.symbol} price already reversing down, skipping SELL`);
-        return null;
-      }
     }
 
     const target = vwap;
