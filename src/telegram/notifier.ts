@@ -11,7 +11,8 @@ export function sendTradeOpenedAlert(
   size: number,
   positionValue: number,
   balance: number,
-  freeBalance: number
+  freeBalance: number,
+  strategyType: string
 ): void {
   const slPct = ((signal.stop - signal.entry) / signal.entry * 100 * (signal.side === 'BUY' ? -1 : 1)).toFixed(2);
   const tpPct = ((signal.target - signal.entry) / signal.entry * 100 * (signal.side === 'BUY' ? 1 : -1)).toFixed(2);
@@ -21,6 +22,7 @@ export function sendTradeOpenedAlert(
 
 Symbol: ${signal.symbol}
 Side: ${signal.side}
+Strategy: ${strategyType}
 Entry: ${signal.entry.toFixed(4)}
 Size: ${size.toFixed(2)} ${signal.symbol.split('_')[0]}
 Value: ${positionValue.toFixed(2)} USDT
@@ -52,6 +54,7 @@ ${emoji} DEAL CLOSED
 
 Symbol: ${trade.symbol}
 Side: ${trade.side}
+Strategy: ${trade.setupType}
 Entry: ${trade.entryPrice.toFixed(4)} → Exit: ${trade.exitPrice.toFixed(4)}
 Size: ${trade.size.toFixed(2)} ${trade.symbol.split('_')[0]}
 
