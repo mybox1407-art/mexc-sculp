@@ -11,15 +11,14 @@ export interface PositionTracking {
   highestUnrealizedPnl: number;
   lowestUnrealizedPnl: number;
   lastUpdate: number;
-  // ✅ Для частичной фиксации
   partialExitDone: boolean;
   trailingActive: boolean;
   trailingStop?: number;
 }
 
 export interface CooldownInfo {
-  until: number;  // Timestamp когда cooldown закончится
-  reason: 'LOSS';  // Причина cooldown
+  until: number;
+  reason: 'LOSS';
 }
 
 export class PaperExecutor {
@@ -259,13 +258,12 @@ export class PaperExecutor {
         pnlPct: (currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1),
         openTimestamp: position.openTimestamp,
         closeTimestamp: Date.now(),
-        fees: 0,
       };
 
       this.tradeResults.push(partialTrade);
       position.realizedPnl += partialPnl;
-      position.size *= (1 - config.partialExitPct);  // Оставить 50%
-      this.reservedBalance -= position.entryPrice * partialSize;  // Освободить часть резерва
+      position.size *= (1 - config.partialExitPct);
+      this.reservedBalance -= position.entryPrice * partialSize;
 
       logger.info(`Partial exit for ${symbol}: closed ${partialSize.toFixed(4)} (${config.partialExitPct * 100}%), PnL=${partialPnl.toFixed(2)}`);
 
