@@ -100,8 +100,15 @@ export class Scanner {
     let totalSupported = 0;
     let totalAtr = 0;
     let totalChange24h = 0;
+    let totalFiltered = 0;
     
     for (const [symbol, ticker] of this.tickers.entries()) {
+      // ✅ Фильтр исключённых токенов
+      if (config.excludedTokens.includes(symbol)) {
+        logger.debug(`Excluded token: ${symbol}`);
+        continue;
+      }
+
       const orderbook = this.orderbooks.get(symbol);
       const trades = this.trades.get(symbol) || [];
       
@@ -113,10 +120,20 @@ export class Scanner {
       const depthMetrics = calculateDepth(orderbook, 5);
       const spreadPct = calculateSpreadPct(orderbook);
       
-      if (depthMetrics.totalDepth < 10) {
+      // ✅ Фильтр по ликвидности: мин. $50k в стакане
+      if (depthMetrics.totalDepth < config.minLiquidityDepth) {
+        logger.debug(`Liquidity filter: ${symbol} depth=${depthMetrics.totalDepth.toFixed(2)} < ${config.minLiquidityDepth}`);
+        totalFiltered++;
         continue;
       }
       totalWithDepth++;
+
+      // ✅ Фильтр по спреду: макс. 0.5%
+      if (spreadPct > config.maxSpreadPct) {
+        logger.debug(`Spread filter: ${symbol} spread=${spreadPct.toFixed(2)}% > ${config.maxSpreadPct}%`);
+        totalFiltered++;
+        continue;
+      }
       
       let candles: Candle[] = this.candles.get(symbol) || [];
       if (candles.length === 0) {
@@ -176,7 +193,7 @@ export class Scanner {
     }
     
     this.scannedTokens = results;
-    logger.info(`Scan: ${totalWithOrderbook} orderbooks, ${totalWithDepth} depth>10, ${totalWithCandles} candles, ${totalSupported} supported, ${totalAtr} atr, ${totalChange24h} change24h`);
+    logger.info(`Scan: ${totalWithOrderbook} orderbooks, ${totalWithDepth} depth>${config.minLiquidityDepth}, ${totalWithCandles} candles, ${totalSupported} supported, ${totalAtr} atr, ${totalChange24h} change24h, ${totalFiltered} filtered`);
     logger.info(`Scan complete: ${results.length} tokens matched`);
     
     return results;
