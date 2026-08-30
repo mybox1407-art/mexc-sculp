@@ -35,6 +35,23 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
       return null;
     }
 
+    // ✅ Momentum фильтр: проверка направления цены (последние 3 свечи)
+    const recentCandles = candles.slice(-3);
+    if (recentCandles.length >= 3) {
+      const firstClose = recentCandles[0].close;
+      const lastClose = recentCandles[2].close;
+      
+      // Если цена уже разворачивается в нашу сторону — пропускать (ждать дальше)
+      if (side === 'BUY' && lastClose < firstClose) {
+        logger.debug(`Momentum filter: ${candles[0]?.symbol} price already reversing up, skipping BUY`);
+        return null;
+      }
+      if (side === 'SELL' && lastClose > firstClose) {
+        logger.debug(`Momentum filter: ${candles[0]?.symbol} price already reversing down, skipping SELL`);
+        return null;
+      }
+    }
+
     const target = vwap;
     
     // SL от entry, а не от VWAP!
@@ -65,46 +82,8 @@ export function generateSpreadScalpSignal(_candles: Candle[], _orderbook: OrderB
   return null;
 }
 
-export function generateLiquiditySweepSignal(candles: Candle[], orderbook: OrderBook, atr: number): Signal | null {
-  const { resistance, support } = calculateSupportResistance(candles, 20);
-  const currentPrice = calculateMidPrice(orderbook.bids[0].price, orderbook.asks[0].price);
-
-  if (currentPrice > resistance && currentPrice - resistance < atr * 0.5) {
-    const entry = currentPrice;
-    const target = resistance - atr * 0.5;
-    const stop = resistance + atr * config.slAtrMultiple;
-
-    return {
-      type: 'LIQUIDITY_SWEEP',
-      symbol: candles[0].symbol,
-      side: 'SELL',
-      entry,
-      target,
-      stop,
-      timestamp: Date.now(),
-      atr,
-      confidence: 0.65,
-    };
-  }
-
-  if (currentPrice < support && support - currentPrice < atr * 0.5) {
-    const entry = currentPrice;
-    const target = support + atr * 0.5;
-    const stop = support - atr * config.slAtrMultiple;
-
-    return {
-      type: 'LIQUIDITY_SWEEP',
-      symbol: candles[0].symbol,
-      side: 'BUY',
-      entry,
-      target,
-      stop,
-      timestamp: Date.now(),
-      atr,
-      confidence: 0.65,
-    };
-  }
-
+export function generateLiquiditySweepSignal(_candles: Candle[], _orderbook: OrderBook, _atr: number): Signal | null {
+  logger.debug(`LIQUIDITY_SWEEP strategy disabled, skipping`);
   return null;
 }
 
@@ -118,8 +97,9 @@ export function generateSignals(candles: Candle[], orderbook: OrderBook, atr: nu
   // const spreadSignal = generateSpreadScalpSignal(candles, orderbook, atr);
   // if (spreadSignal) signals.push(spreadSignal);
 
-  //const sweepSignal = generateLiquiditySweepSignal(candles, orderbook, atr);
-  //if (sweepSignal) signals.push(sweepSignal);
+  // ✅ LIQUIDITY_SWEEP отключён
+  // const sweepSignal = generateLiquiditySweepSignal(candles, orderbook, atr);
+  // if (sweepSignal) signals.push(sweepSignal);
 
   return signals;
 }
