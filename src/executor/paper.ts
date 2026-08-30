@@ -248,6 +248,7 @@ export class PaperExecutor {
       const partialSize = position.size * config.partialExitPct;
       const partialPnl = position.unrealizedPnl * config.partialExitPct;
       
+      // ✅ Исправлено: добавлены обязательные поля commission, slippage, setupType
       const partialTrade: TradeResult = {
         symbol: position.symbol,
         side: position.side,
@@ -258,6 +259,9 @@ export class PaperExecutor {
         pnlPct: (currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1),
         openTimestamp: position.openTimestamp,
         closeTimestamp: Date.now(),
+        commission: 0,
+        slippage: 0,
+        setupType: position.signal.type,
       };
 
       this.tradeResults.push(partialTrade);
