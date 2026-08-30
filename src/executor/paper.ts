@@ -18,7 +18,7 @@ export interface PositionTracking {
 
 export interface CooldownInfo {
   until: number;
-  reason: 'LOSS';
+  reason: 'LOSS' | 'PROFIT';
 }
 
 export class PaperExecutor {
@@ -67,7 +67,7 @@ export class PaperExecutor {
     if (this.isOnCooldown(signal.symbol)) {
       const cooldown = this.cooldowns.get(signal.symbol)!;
       const remaining = Math.round((cooldown.until - Date.now()) / 1000);
-      logger.debug(`Cooldown for ${signal.symbol}: ${remaining}s remaining`);
+      logger.debug(`Cooldown for ${signal.symbol}: ${remaining}s remaining (reason: ${cooldown.reason})`);
       return null;
     }
 
@@ -174,13 +174,12 @@ export class PaperExecutor {
       this.balance += result.pnl;
       this.reservedBalance -= position.entryPrice * position.size;
 
-      if (result.pnl < 0) {
-        this.cooldowns.set(symbol, {
-          until: Date.now() + 15 * 60 * 1000,
-          reason: 'LOSS',
-        });
-        logger.info(`Cooldown set for ${symbol}: 15 minutes after loss`);
-      }
+      // ✅ Cooldown после любой сделки (15 минут)
+      this.cooldowns.set(symbol, {
+        until: Date.now() + 15 * 60 * 1000,
+        reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
+      });
+      logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
 
       const avgHoldTime = this.tradeResults.length > 0
         ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
@@ -220,12 +219,12 @@ export class PaperExecutor {
         this.balance += result.pnl;
         this.reservedBalance -= position.entryPrice * position.size;
 
-        if (result.pnl < 0) {
-          this.cooldowns.set(symbol, {
-            until: Date.now() + 15 * 60 * 1000,
-            reason: 'LOSS',
-          });
-        }
+        // ✅ Cooldown после любой сделки (15 минут)
+        this.cooldowns.set(symbol, {
+          until: Date.now() + 15 * 60 * 1000,
+          reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
+        });
+        logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
 
         const avgHoldTime = this.tradeResults.length > 0
           ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
@@ -289,6 +288,13 @@ export class PaperExecutor {
       this.balance += result.pnl;
       this.reservedBalance -= position.entryPrice * position.size;
 
+      // ✅ Cooldown после любой сделки (15 минут)
+      this.cooldowns.set(symbol, {
+        until: Date.now() + 15 * 60 * 1000,
+        reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
+      });
+      logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
+
       const avgHoldTime = this.tradeResults.length > 0
         ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
         : (Date.now() - position.openTimestamp) / 1000 / 60;
@@ -311,13 +317,12 @@ export class PaperExecutor {
       this.balance += result.pnl;
       this.reservedBalance -= position.entryPrice * position.size;
 
-      if (result.pnl < 0) {
-        this.cooldowns.set(symbol, {
-          until: Date.now() + 15 * 60 * 1000,
-          reason: 'LOSS',
-        });
-        logger.info(`Cooldown set for ${symbol}: 15 minutes after loss`);
-      }
+      // ✅ Cooldown после любой сделки (15 минут)
+      this.cooldowns.set(symbol, {
+        until: Date.now() + 15 * 60 * 1000,
+        reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
+      });
+      logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
 
       const avgHoldTime = this.tradeResults.length > 0
         ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
