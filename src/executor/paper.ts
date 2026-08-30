@@ -140,6 +140,10 @@ export class PaperExecutor {
     }
 
     const position = tracking.position;
+    
+    // ✅ Добавлено логирование orderbook
+    logger.debug(`[${symbol}] OB: bid=${orderbook.bids[0].price}, ask=${orderbook.asks[0].price}, ts=${Date.now()}`);
+    
     const currentPrice = position.side === 'BUY' ? orderbook.bids[0].price : orderbook.asks[0].price;
     position.currentPrice = currentPrice;
     position.unrealizedPnl = (currentPrice - position.entryPrice) * position.size * (position.side === 'BUY' ? 1 : -1);
@@ -191,15 +195,15 @@ export class PaperExecutor {
       return result;
     }
 
-    // ✅ Трейлинг-стоп после TP1 (уменьшена дистанция: 0.15 ATR вместо 0.3)
+    // ✅ Трейлинг-стоп после TP1 (уменьшена дистанция: 0.2 ATR)
     const targetPnl1 = position.size * position.signal.atr * config.tpPct1;
     if (position.unrealizedPnl >= targetPnl1 && !tracking.trailingActive) {
       tracking.trailingActive = true;
-      // ✅ Уменьшено: 0.15 ATR вместо 0.3 ATR
+      // ✅ Увеличено: 0.2 ATR вместо 0.15
       tracking.trailingStop = position.side === 'BUY'
-        ? position.entryPrice + position.signal.atr * 0.2 //было 0.15
+        ? position.entryPrice + position.signal.atr * 0.2
         : position.entryPrice - position.signal.atr * 0.2;
-      logger.info(`Trailing stop activated for ${symbol}: ${tracking.trailingStop.toFixed(4)} (0.15 ATR)`);
+      logger.info(`Trailing stop activated for ${symbol}: ${tracking.trailingStop.toFixed(4)} (0.2 ATR)`);
     }
 
     // Проверка трейлинг-стопа
