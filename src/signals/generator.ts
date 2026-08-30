@@ -19,6 +19,22 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   // ✅ Ужесточено: ×2 ATR вместо ×1.5
   if (deviation > atr * config.atrMultiple * 2 / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
+    
+    // ✅ MFE фильтр: проверка距离 до support/resistance
+    const { resistance, support } = calculateSupportResistance(candles, 20);
+    const distanceToResistance = (resistance - currentPrice) / currentPrice;
+    const distanceToSupport = (currentPrice - support) / currentPrice;
+    
+    // Если цена ближе 0.5% к уровню — пропускать сигнал
+    if (side === 'BUY' && distanceToResistance < 0.005) {
+      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to resistance (${(distanceToResistance * 100).toFixed(2)}%)`);
+      return null;
+    }
+    if (side === 'SELL' && distanceToSupport < 0.005) {
+      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to support (${(distanceToSupport * 100).toFixed(2)}%)`);
+      return null;
+    }
+
     const target = vwap;
     
     // SL от entry, а не от VWAP!
