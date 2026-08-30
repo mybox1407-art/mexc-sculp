@@ -63,7 +63,7 @@ export const config: Config = {
   // ✅ Новые параметры
   partialExitPct: parseFloat(process.env.PARTIAL_EXIT_PCT || '0.5'),  // 50% позиции
   maxHoldMinutes: parseInt(process.env.MAX_HOLD_MINUTES || '10', 10),  // 10 минут
-  minLiquidityDepth: parseFloat(process.env.MIN_LIQUIDITY_DEPTH || '5000'),  // $50k
+  minLiquidityDepth: parseFloat(process.env.MIN_LIQUIDITY_DEPTH || '3000'),  // $50k
   minAvgVolume: parseFloat(process.env.MIN_AVG_VOLUME || '10000'),  // объём за 20 свечей
   excludedTokens: (process.env.EXCLUDED_TOKENS || 'HNT_USDT,MOVR_USDT,GIGGLE_USDT').split(','),
 };
