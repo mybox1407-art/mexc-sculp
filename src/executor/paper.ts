@@ -239,7 +239,7 @@ export class PaperExecutor {
 
     // ✅ Частичная фиксация на TP1 (50% позиции)
     const targetPnl1Full = position.size * position.signal.atr * config.tpPct1;
-    const targetPnl2 = position.size * position.signal.atr * config.tpPct2;
+    const targetPnl2Full = position.size * position.signal.atr * config.tpPct2; // ✅ Сохраняем оригинальный targetPnl2
 
     if (!tracking.partialExitDone && position.unrealizedPnl >= targetPnl1Full) {
       tracking.partialExitDone = true;
@@ -248,7 +248,6 @@ export class PaperExecutor {
       const partialSize = position.size * config.partialExitPct;
       const partialPnl = position.unrealizedPnl * config.partialExitPct;
       
-      // ✅ Исправлено: добавлены обязательные поля commission, slippage, setupType
       const partialTrade: TradeResult = {
         symbol: position.symbol,
         side: position.side,
@@ -278,8 +277,8 @@ export class PaperExecutor {
       logTrade(partialTrade, 'TP1_PARTIAL', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
     }
 
-    // Проверка TP2 (закрыть остаток)
-    if (position.unrealizedPnl >= targetPnl2) {
+    // Проверка TP2 (закрыть остаток) - ✅ используем targetPnl2Full
+    if (position.unrealizedPnl >= targetPnl2Full) {
       const exitPrice = calculateExitPrice(position, orderbook);
       const result = calculateTradeResult(position, exitPrice);
 
