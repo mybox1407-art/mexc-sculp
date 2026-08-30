@@ -118,8 +118,8 @@ export function generateSignals(candles: Candle[], orderbook: OrderBook, atr: nu
   // const spreadSignal = generateSpreadScalpSignal(candles, orderbook, atr);
   // if (spreadSignal) signals.push(spreadSignal);
 
-  const sweepSignal = generateLiquiditySweepSignal(candles, orderbook, atr);
-  if (sweepSignal) signals.push(sweepSignal);
+  //const sweepSignal = generateLiquiditySweepSignal(candles, orderbook, atr);
+  //if (sweepSignal) signals.push(sweepSignal);
 
   return signals;
 }
