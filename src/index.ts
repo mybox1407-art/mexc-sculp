@@ -23,7 +23,7 @@ async function main() {
 
     let lastReportTime = Date.now();
     const reportInterval = 24 * 60 * 60 * 1000;
-    const positionCheckInterval = 5000;  // 5 секунд
+    const positionCheckInterval = 2000;  // было 5 секунд
 
     // Мониторинг позиций каждые 5 секунд
     setInterval(() => {
