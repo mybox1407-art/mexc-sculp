@@ -197,8 +197,8 @@ export class PaperExecutor {
       tracking.trailingActive = true;
       // ✅ Уменьшено: 0.15 ATR вместо 0.3 ATR
       tracking.trailingStop = position.side === 'BUY'
-        ? position.entryPrice + position.signal.atr * 0.15
-        : position.entryPrice - position.signal.atr * 0.15;
+        ? position.entryPrice + position.signal.atr * 0.2 //было 0.15
+        : position.entryPrice - position.signal.atr * 0.2;
       logger.info(`Trailing stop activated for ${symbol}: ${tracking.trailingStop.toFixed(4)} (0.15 ATR)`);
     }
 
