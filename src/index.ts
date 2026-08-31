@@ -42,7 +42,7 @@ async function main() {
         let orderbook = await scanner.getOrderbookFromApi(position.symbol);
 
         // ✅ Логируем проверку REST-стакана
-        logger.warn(
+        logger.info(
           `[UPDATE_OB_CHECK] ${position.symbol} ` +
           `restOb=${orderbook ? 'present' : 'null'} ` +
           `bids=${orderbook?.bids?.length ?? 0} ` +
@@ -82,8 +82,9 @@ async function main() {
         }
       }
 
-      // ✅ Логирование открытых позиций
-      for (const pos of openPositions) {
+      // ✅ 2. Логирование открытых позиций (после обновления!)
+      const updatedPositions = executor.getPositions();
+      for (const pos of updatedPositions) {
         const pnlPct = (pos.currentPrice - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? 1 : -1);
         const pnl = pos.unrealizedPnl;
         const slDist = ((pos.signal.stop - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? -1 : 1)).toFixed(2);
@@ -97,12 +98,12 @@ async function main() {
         );
       }
 
-      // ✅ 2. Кэшируем orderbook для всех токенов
+      // ✅ 3. Кэшируем orderbook для всех токенов
       for (const token of scannedTokens) {
         executor.cacheOrderbook(token.symbol, token.orderbook);
       }
 
-      // ✅ 3. Генерируем и исполняем сигналы
+      // ✅ 4. Генерируем и исполняем сигналы
       for (const token of scannedTokens) {
         const signals = generateSignals(token.candles, token.orderbook, token.atr);
 
@@ -121,7 +122,7 @@ async function main() {
           let orderbook = await scanner.getOrderbookFromApi(signal.symbol);
 
           // ✅ Логируем проверку REST-стакана перед исполнением
-          logger.warn(
+          logger.info(
             `[EXEC_OB_CHECK] ${signal.symbol} ` +
             `restOb=${orderbook ? 'present' : 'null'} ` +
             `bids=${orderbook?.bids?.length ?? 0} ` +
@@ -166,7 +167,7 @@ async function main() {
         }
       }
 
-      // ✅ 4. Daily report
+      // ✅ 5. Daily report
       if (Date.now() - lastReportTime >= reportInterval) {
         const stats = calculateStats(executor.getTradeResults());
         const activityStats = executor.getActivityStats();
