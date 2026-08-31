@@ -5,12 +5,54 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 
 // Комиссии MEXC Futures
-const TAKER_FEE = 0.00032;   // 0.032%
+const TAKER_FEE = 0.00032; // 0.032%
 
 let orderCounter = 0;
 
+function isValidPrice(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function getBestPrices(orderbook: OrderBook | null | undefined): {
+  bestBid: number;
+  bestAsk: number;
+} | null {
+  const bid = orderbook?.bids?.[0];
+  const ask = orderbook?.asks?.[0];
+
+  if (
+    !bid ||
+    !ask ||
+    !isValidPrice(bid.price) ||
+    !isValidPrice(ask.price)
+  ) {
+    return null;
+  }
+
+  // Ask ниже bid означает повреждённый/несогласованный стакан.
+  if (ask.price < bid.price) {
+    return null;
+  }
+
+  return {
+    bestBid: bid.price,
+    bestAsk: ask.price,
+  };
+}
+
+function logInvalidOrderbook(context: string, symbol: string, orderbook: OrderBook | null | undefined): void {
+  logger.warn(
+    `[INVALID_ORDERBOOK:${context}] ${symbol} ` +
+    `bids=${orderbook?.bids?.length ?? 0} ` +
+    `asks=${orderbook?.asks?.length ?? 0} ` +
+    `bid0=${JSON.stringify(orderbook?.bids?.[0] ?? null)} ` +
+    `ask0=${JSON.stringify(orderbook?.asks?.[0] ?? null)}`
+  );
+}
+
 export function createPaperOrder(signal: Signal, size: number): PaperOrder {
   orderCounter++;
+
   return {
     id: `order_${orderCounter}_${Date.now()}`,
     signal,
@@ -26,21 +68,31 @@ export function createPaperOrder(signal: Signal, size: number): PaperOrder {
 }
 
 export function simulateOrderFill(order: PaperOrder, orderbook: OrderBook): PaperOrder | null {
-  const bestBid = orderbook.bids[0].price;
-  const bestAsk = orderbook.asks[0].price;
+  const prices = getBestPrices(orderbook);
 
-  let fillPrice: number;
-  
-  // ✅ РЫНОЧНЫЙ ОРДЕР - исполняем всегда по лучшей цене
-  if (order.side === 'BUY') {
-    fillPrice = bestAsk;  // Покупаем по лучшей цене продажи
-  } else {
-    fillPrice = bestBid;  // Продаём по лучшей цене покупки
+  if (!prices) {
+    logInvalidOrderbook('FILL', order.symbol, orderbook);
+    return null;
+  }
+
+  const fillPrice = order.side === 'BUY'
+    ? prices.bestAsk
+    : prices.bestBid;
+
+  if (!isValidPrice(order.entryPrice)) {
+    logger.warn(
+      `[INVALID_ORDER_ENTRY] ${order.symbol} entry=${order.entryPrice}; order ignored`
+    );
+    return null;
   }
 
   const slippage = Math.abs(fillPrice - order.entryPrice) / order.entryPrice;
+
   if (slippage > 0.01) {
-    logger.warn(`High slippage detected for ${order.symbol}: ${slippage * 100}%`);
+    logger.warn(
+      `High slippage detected for ${order.symbol}: ${(slippage * 100).toFixed(4)}% ` +
+      `signalEntry=${order.entryPrice} fillPrice=${fillPrice}`
+    );
   }
 
   order.status = 'FILLED';
@@ -48,47 +100,92 @@ export function simulateOrderFill(order: PaperOrder, orderbook: OrderBook): Pape
   order.avgFillPrice = fillPrice;
   order.fillTimestamp = Date.now();
 
+  logger.debug(
+    `[PAPER_FILL] ${order.symbol} ${order.side} ` +
+    `size=${order.size} entry=${order.entryPrice} fill=${fillPrice} ` +
+    `bid=${prices.bestBid} ask=${prices.bestAsk}`
+  );
+
   return order;
 }
 
-export function calculateExitPrice(position: PaperPosition, orderbook: OrderBook): number {
-  if (position.side === 'BUY') {
-    return orderbook.bids[0].price;
-  } else {
-    return orderbook.asks[0].price;
+/**
+ * Возвращает цену рыночного выхода:
+ * BUY закрывается продажей по best bid.
+ * SELL закрывается покупкой по best ask.
+ *
+ * Возвращает null при невалидном стакане. Вызывающая сторона
+ * должна пропустить обновление, а не закрывать позицию по вымышленной цене.
+ */
+export function calculateExitPrice(position: PaperPosition, orderbook: OrderBook): number | null {
+  const prices = getBestPrices(orderbook);
+
+  if (!prices) {
+    logInvalidOrderbook('EXIT', position.symbol, orderbook);
+    return null;
   }
+
+  return position.side === 'BUY'
+    ? prices.bestBid
+    : prices.bestAsk;
 }
 
 export function shouldExitPosition(position: PaperPosition, signal: Signal): boolean {
-  const pnlPct = (position.currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1);
-
-  // Проверка TP
-  if (pnlPct >= config.tpPct1 || pnlPct >= config.tpPct2) {
-    return true;
+  if (
+    !isValidPrice(position.currentPrice) ||
+    !isValidPrice(position.entryPrice)
+  ) {
+    logger.warn(
+      `[INVALID_POSITION_PRICE] ${position.symbol} ` +
+      `entry=${position.entryPrice} current=${position.currentPrice}`
+    );
+    return false;
   }
 
-  // Проверка SL — по направлению!
+  const pnlPct =
+    ((position.currentPrice - position.entryPrice) / position.entryPrice) *
+    100 *
+    (position.side === 'BUY' ? 1 : -1);
+
+  /*
+   * TP1 и TP2 теперь обрабатываются в PaperExecutor через ATR-price targets:
+   * targetPrice1 / targetPrice2.
+   *
+   * Поэтому здесь оставляем только Stop Loss. Иначе позиция будет
+   * преждевременно закрыта по tpPct1/tpPct2, которые имеют другой смысл
+   * и не являются процентами PnL.
+   */
   if (position.side === 'BUY') {
-    if (position.currentPrice <= signal.stop) {  // BUY: SL ниже
-      return true;
-    }
-  } else {
-    if (position.currentPrice >= signal.stop) {  // SELL: SL выше
-      return true;
-    }
+    return position.currentPrice <= signal.stop;
   }
 
-  return false;
+  return position.currentPrice >= signal.stop;
 }
 
 export function calculateTradeResult(position: PaperPosition, exitPrice: number): TradeResult {
-  const grossPnl = (exitPrice - position.entryPrice) * position.size * (position.side === 'BUY' ? 1 : -1);
-  
-  // Комиссия: открытие + закрытие (Taker)
-  const commission = position.entryPrice * position.size * TAKER_FEE + 
-                     exitPrice * position.size * TAKER_FEE;
-  
-  const slippage = Math.abs(exitPrice - position.currentPrice) * position.size;
+  if (!isValidPrice(exitPrice)) {
+    throw new Error(
+      `Invalid exit price for ${position.symbol}: ${String(exitPrice)}`
+    );
+  }
+
+  const grossPnl =
+    (exitPrice - position.entryPrice) *
+    position.size *
+    (position.side === 'BUY' ? 1 : -1);
+
+  // Комиссия: открытие + закрытие, обе стороны принимаются как taker.
+  const commission =
+    position.entryPrice * position.size * TAKER_FEE +
+    exitPrice * position.size * TAKER_FEE;
+
+  /*
+   * В этой paper-модели exitPrice уже является фактической ценой best bid/ask.
+   * Разницу от position.currentPrice нельзя повторно называть и вычитать как
+   * slippage: currentPrice обычно получен из того же bid/ask, а при устаревшем
+   * стакане она будет искусственно искажать результат.
+   */
+  const slippage = 0;
   const pnl = grossPnl - commission - slippage;
   const pnlPct = (pnl / (position.entryPrice * position.size)) * 100;
 
