@@ -60,15 +60,7 @@ export class Scanner {
   }
 
   private subscribeToSymbol(symbol: string): void {
-    logger.info(`[SUBSCRIBE] raw="${symbol}"`);
-    
     const orderBookHandler: OrderBookHandler = (orderbook) => {
-      logger.debug(
-        `[WS_HANDLER] key="${symbol}" ` +
-        `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
-        `bid0=${orderbook.bids[0]?.price} ask0=${orderbook.asks[0]?.price}`
-      );
-      
       this.orderbooks.set(symbol, orderbook);
       
       if (!this.orderbookHistory.has(symbol)) {
@@ -151,8 +143,6 @@ export class Scanner {
       if (config.excludedTokens.includes(symbol)) {
         continue;
       }
-
-      logger.debug(`[SCAN_CHECK] key="${symbol}" ob_exists=${this.orderbooks.has(symbol)}`);
 
       const orderbook = this.orderbooks.get(symbol);
       const trades = this.trades.get(symbol) || [];
