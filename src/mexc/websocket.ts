@@ -26,10 +26,6 @@ export class MexcWebSocket {
     }
     this.orderBookHandlers.get(upperSymbol)!.push(handler);
 
-    if (!this.orderBooks.has(upperSymbol)) {
-      await this.initOrderBook(upperSymbol);
-    }
-
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(upperSymbol, 'depth');
     } else if (!this.isConnecting) {
@@ -49,57 +45,6 @@ export class MexcWebSocket {
       this.sendSubscription(upperSymbol, 'trade');
     } else if (!this.isConnecting) {
       this.connect();
-    }
-  }
-
-  private async initOrderBook(symbol: string): Promise<void> {
-    try {
-      const url = `https://api.mexc.com/api/v1/contract/depth/${symbol}?limit=1000`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      const json = await res.json() as {
-        data?: {
-          bids?: any[][];
-          asks?: any[][];
-          version?: number;
-          cts?: number;
-          timestamp?: number;
-        };
-        bids?: any[][];
-        asks?: any[][];
-        version?: number;
-        cts?: number;
-        timestamp?: number;
-      };
-      const data = json.data || json;
-
-      const orderbook: OrderBook = {
-        symbol,
-        bids: (data.bids || []).map((b: any) => ({
-          price: parseFloat(b[0]),
-          size: parseFloat(b[1]),
-        })),
-        asks: (data.asks || []).map((a: any) => ({
-          price: parseFloat(a[0]),
-          size: parseFloat(a[1]),
-        })),
-        timestamp: data.cts || data.timestamp || Date.now(),
-      };
-
-      const version = Number(data.version ?? 0);
-      this.orderBooks.set(symbol, orderbook);
-
-      logger.info(
-        `[ORDERBOOK_INIT] ${symbol} ` +
-        `version=${version} ` +
-        `bids=${orderbook.bids.length} ` +
-        `asks=${orderbook.asks.length}`
-      );
-    } catch (err) {
-      logger.error(`[ORDERBOOK_INIT_FAIL] ${symbol} ${getErrorMessage(err)}`);
     }
   }
 
@@ -188,7 +133,6 @@ export class MexcWebSocket {
     const bids = this.parseLevels(data.bids);
     const asks = this.parseLevels(data.asks);
 
-    // Тихо пропускаем сообщения без полноценного стакана
     if (bids.length === 0 || asks.length === 0) {
       return;
     }
