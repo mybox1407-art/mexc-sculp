@@ -20,27 +20,34 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   if (deviation > atr * config.atrMultiple * 1.5 / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     
-    // ✅ MFE фильтр: проверка距离 до support/resistance
+    // ✅ MFE фильтр: проверка distance до support/resistance
     const { resistance, support } = calculateSupportResistance(candles, 20);
     const distanceToResistance = (resistance - currentPrice) / currentPrice;
     const distanceToSupport = (currentPrice - support) / currentPrice;
     
-    // Если цена ближе 1% к уровню — пропускать сигнал (расслаблено с 0.5%)
-    if (side === 'BUY' && distanceToResistance < 0.01) {
-      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to resistance (${(distanceToResistance * 100).toFixed(2)}%)`);
+    // ✅ ИСПРАВЛЕНО: проверяем distance до ПРОТИВОПОЛОЖНОГО уровня относительно цели
+    const targetDistance = Math.abs(vwap - currentPrice) / currentPrice;  // Расстояние до VWAP (цель)
+    
+    if (side === 'BUY' && distanceToResistance < targetDistance * 0.3) {
+      // Если до resistance меньше 30% от пути до цели — пропускаем
+      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to resistance (${(distanceToResistance * 100).toFixed(2)}%), need ${(targetDistance * 0.3 * 100).toFixed(2)}%`);
       return null;
     }
-    if (side === 'SELL' && distanceToSupport < 0.01) {
-      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to support (${(distanceToSupport * 100).toFixed(2)}%)`);
+    if (side === 'SELL' && distanceToSupport < targetDistance * 0.3) {
+      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to support (${(distanceToSupport * 100).toFixed(2)}%), need ${(targetDistance * 0.3 * 100).toFixed(2)}%`);
       return null;
     }
 
-    const target = vwap;
+    // ✅ ИСПРАВЛЕНО: TP = entry ± ATR × tpAtrMultiple, а не VWAP
+    const tpDistance = atr * config.tpAtrMultiple1;
+    const target = side === 'BUY'
+      ? currentPrice + tpDistance
+      : currentPrice - tpDistance;
     
-    // SL от entry, а не от VWAP!
+    // SL от entry: entry ± ATR × slAtrMultiple
     const stop = side === 'BUY' 
-      ? currentPrice - atr * config.slAtrMultiple  // BUY: SL ниже входа
-      : currentPrice + atr * config.slAtrMultiple; // SELL: SL выше входа
+      ? currentPrice - atr * config.slAtrMultiple
+      : currentPrice + atr * config.slAtrMultiple;
 
     return {
       type: 'VWAP_MEAN_REVERSION',
