@@ -89,20 +89,71 @@ export class Scanner {
     this.mexcWs.subscribeTrades(symbol, tradeHandler);
   }
 
-  // ✅ Polling orderbook через REST API для открытых позиций
+  /**
+   * ✅ Polling orderbook через REST API для открытых позиций.
+   *
+   * Возвращает null при HTTP-ошибке, пустом или невалидном ответе.
+   */
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
     try {
-      const response = await fetch(`${config.mexcBaseUrl}/api/v1/depth?symbol=${symbol}&limit=5`);
-      const data: any = await response.json();
-      
-      return {
+      const url = `${config.mexcBaseUrl}/api/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=5`;
+
+      const response = await fetch(url);
+      const rawText = await response.text();
+
+      // ✅ Логируем сырой ответ
+      logger.warn(
+        `[REST_OB_RAW] ${symbol} status=${response.status} body=${rawText.slice(0, 500)}`
+      );
+
+      if (!response.ok) {
+        logger.warn(`[REST_OB_ERROR] ${symbol} HTTP ${response.status}`);
+        return null;
+      }
+
+      const data = JSON.parse(rawText);
+
+      // ✅ Логируем структуру
+      logger.warn(
+        `[REST_OB_PARSED] ${symbol} ` +
+        `hasBids=${'bids' in data} hasAsks=${'asks' in data} ` +
+        `bidsLen=${Array.isArray(data.bids) ? data.bids.length : 'N/A'} ` +
+        `asksLen=${Array.isArray(data.asks) ? data.asks.length : 'N/A'}`
+      );
+
+      const orderbook: OrderBook = {
         symbol,
-        bids: (data.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-        asks: (data.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
+        bids: (data.bids || []).map((b: any) => ({
+          price: parseFloat(b[0]),
+          size: parseFloat(b[1]),
+        })),
+        asks: (data.asks || []).map((a: any) => ({
+          price: parseFloat(a[0]),
+          size: parseFloat(a[1]),
+        })),
         timestamp: Date.now(),
       };
+
+      // ✅ Логируем результат
+      logger.warn(
+        `[REST_OB_RESULT] ${symbol} ` +
+        `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
+        `bid0=${JSON.stringify(orderbook.bids[0] ?? null)} ` +
+        `ask0=${JSON.stringify(orderbook.asks[0] ?? null)}`
+      );
+
+      // Если одна из сторон пустая — считаем стакан невалидным.
+      if (orderbook.bids.length === 0 || orderbook.asks.length === 0) {
+        logger.warn(
+          `[REST_OB_EMPTY_SIDE] ${symbol} ` +
+          `bids=${orderbook.bids.length} asks=${orderbook.asks.length}`
+        );
+        return null;
+      }
+
+      return orderbook;
     } catch (error) {
-      logger.debug(`Failed to fetch orderbook for ${symbol}: ${getErrorMessage(error)}`);
+      logger.warn(`[REST_OB_EXCEPTION] ${symbol} ${String(error)}`);
       return null;
     }
   }
