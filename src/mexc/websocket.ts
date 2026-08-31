@@ -15,7 +15,8 @@ export class MexcWebSocket {
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
   private orderBooks: Map<string, OrderBook> = new Map();
-  private subscribedSymbols: Set<string> = new Set();  // ✅ Отслеживаем уже подписанные
+  private subscribedSymbols: Set<string> = new Set();
+  private pingInterval: NodeJS.Timeout | null = null;  // ✅ Heartbeat интервал
 
   constructor() {}
 
@@ -26,7 +27,6 @@ export class MexcWebSocket {
     }
     this.orderBookHandlers.get(upperSymbol)!.push(handler);
 
-    // ✅ Добавляем в pending только если ещё не подписаны
     if (!this.subscribedSymbols.has(`${upperSymbol}_depth`)) {
       this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'depth' });
     }
@@ -45,7 +45,6 @@ export class MexcWebSocket {
     }
     this.tradeHandlers.get(upperSymbol)!.push(handler);
 
-    // ✅ Добавляем в pending только если ещё не подписаны
     if (!this.subscribedSymbols.has(`${upperSymbol}_trade`)) {
       this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'trade' });
     }
@@ -73,6 +72,7 @@ export class MexcWebSocket {
       logger.info('WebSocket connected');
       this.isConnecting = false;
       this.subscribeAll();
+      this.startPing();  // ✅ Запускаем heartbeat
     });
 
     this.ws.on('message', (data: WebSocket.Data) => {
@@ -90,11 +90,34 @@ export class MexcWebSocket {
 
     this.ws.on('close', () => {
       logger.info('WebSocket closed, reconnecting...');
+      this.stopPing();  // ✅ Останавливаем heartbeat
       this.isConnecting = false;
-      // ✅ Очищаем tracking подписок перед реконнектом
       this.subscribedSymbols.clear();
       setTimeout(() => this.connect(), this.reconnectDelay);
     });
+
+    this.ws.on('pong', () => {
+      logger.debug('WebSocket pong received');
+    });
+  }
+
+  private startPing(): void {
+    this.stopPing();  // ✅ На случай если уже запущен
+    
+    // ✅ MEXC требует ping каждые 30 сек
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.ping();
+        logger.debug('WebSocket ping sent');
+      }
+    }, 30000);
+  }
+
+  private stopPing(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
   }
 
   private subscribeAll(): void {
@@ -106,7 +129,6 @@ export class MexcWebSocket {
 
     for (const { symbol, type } of this.pendingSubscriptions) {
       this.sendSubscription(symbol, type);
-      // ✅ Помечаем как подписанные
       this.subscribedSymbols.add(`${symbol}_${type}`);
     }
   }
@@ -229,6 +251,7 @@ export class MexcWebSocket {
   }
 
   public disconnect(): void {
+    this.stopPing();  // ✅ Останавливаем heartbeat
     if (this.ws) {
       this.ws.close();
       this.ws = null;
