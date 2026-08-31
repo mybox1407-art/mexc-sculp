@@ -3,6 +3,11 @@ import { OrderBook, Trade } from './types';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/error';
 
+type PriceLevel = {
+  price: number;
+  size: number;
+};
+
 export type OrderBookHandler = (orderbook: OrderBook) => void;
 export type TradeHandler = (trade: Trade) => void;
 
@@ -12,112 +17,290 @@ export class MexcWebSocket {
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
   private baseUrl: string = 'wss://contract.mexc.com/edge';
   private isConnecting: boolean = false;
-  private orderBooks: Map<string, OrderBook> = new Map();
-  private pingInterval: NodeJS.Timeout | null = null;
-  private lastVersion: Map<string, number> = new Map();
 
+  // Локальный собранный стакан. Здесь применяются WS-инкременты.
+  private orderBooks: Map<string, OrderBook> = new Map();
+
+  private pingInterval: NodeJS.Timeout | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectAttempt = 0;
+  private manuallyDisconnected = false;
+
+  // Желаемые подписки сохраняются после reconnect.
   private desiredSubscriptions = new Set<string>();
   private activeSubscriptions = new Set<string>();
-  private reconnectAttempt = 0;
-  private reconnectTimer: NodeJS.Timeout | null = null;
-
-  constructor() {}
 
   public async connect(): Promise<void> {
-    if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
+    if (this.isConnecting) {
       return;
     }
 
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    this.manuallyDisconnected = false;
     this.isConnecting = true;
 
-    return new Promise<void>((resolve, reject) => {
-      this.ws = new WebSocket(this.baseUrl);
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(this.baseUrl);
+      this.ws = ws;
 
-      this.ws.once('open', () => {
-        logger.info('WebSocket connected');
+      const onInitialError = (error: Error) => {
+        this.isConnecting = false;
+        reject(error);
+      };
+
+      ws.once('open', () => {
+        ws.removeListener('error', onInitialError);
+
         this.isConnecting = false;
         this.reconnectAttempt = 0;
+
+        logger.info('WebSocket connected');
+
         this.subscribeAll();
         this.startPing();
+
         resolve();
       });
 
-      this.ws.once('error', (err) => {
-        logger.error(`WebSocket error on connect: ${getErrorMessage(err)}`);
-        this.isConnecting = false;
-        reject(err);
-      });
+      ws.once('error', onInitialError);
 
-      this.ws.on('message', (data, isBinary) => {
+      ws.on('message', (data, isBinary) => {
         try {
           if (isBinary) {
             logger.warn(
-              { length: Buffer.isBuffer(data) ? data.length : (data as ArrayBuffer).byteLength },
-              'Unexpected binary WS frame from MEXC'
+              {
+                length: Buffer.isBuffer(data)
+                  ? data.length
+                  : (data as ArrayBuffer).byteLength,
+              },
+              'Unexpected binary WebSocket frame from MEXC'
             );
             return;
           }
 
-          const text = data.toString('utf8');
-          const message = JSON.parse(text);
+          const message = JSON.parse(data.toString('utf8'));
           this.handleMessage(message);
         } catch (error) {
           logger.error(
             {
               err: getErrorMessage(error),
               isBinary,
-              length: Buffer.isBuffer(data) ? data.length : undefined,
             },
-            'Failed to process MEXC WS frame'
+            'Failed to process MEXC WebSocket message'
           );
         }
       });
 
-      this.ws.on('error', (error: Error) => {
+      ws.on('error', (error: Error) => {
         logger.error(`WebSocket runtime error: ${error.message}`);
       });
 
-      this.ws.on('close', () => {
-        logger.info('WebSocket closed, reconnecting...');
-        this.handleReconnect();
-      });
+      ws.on('close', (code: number, reason: Buffer) => {
+        const reasonText = reason.toString('utf8');
 
-      this.ws.on('pong', () => {
-        logger.debug('WebSocket pong received');
+        this.stopPing();
+        this.isConnecting = false;
+        this.activeSubscriptions.clear();
+
+        if (this.ws === ws) {
+          this.ws = null;
+        }
+
+        if (this.manuallyDisconnected) {
+          logger.info(`WebSocket closed manually: code=${code}, reason=${reasonText}`);
+          return;
+        }
+
+        logger.warn(
+          `WebSocket closed: code=${code}, reason=${reasonText || 'none'}; reconnecting...`
+        );
+
+        this.scheduleReconnect();
       });
     });
   }
 
-  private handleReconnect(): void {
-    this.stopPing();
-    this.isConnecting = false;
-    this.activeSubscriptions.clear();
-    this.lastVersion.clear();
+  public async subscribeOrderBook(
+    symbol: string,
+    handler: OrderBookHandler
+  ): Promise<void> {
+    const upperSymbol = symbol.toUpperCase();
+    const key = this.subscriptionKey(upperSymbol, 'depth');
 
-    if (this.reconnectTimer) {
+    const handlers = this.orderBookHandlers.get(upperSymbol) ?? [];
+    handlers.push(handler);
+    this.orderBookHandlers.set(upperSymbol, handlers);
+
+    this.desiredSubscriptions.add(key);
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.subscribeIfNeeded(upperSymbol, 'depth');
       return;
     }
 
-    const baseMs = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempt++);
+    await this.connect();
+  }
+
+  public async subscribeTrades(
+    symbol: string,
+    handler: TradeHandler
+  ): Promise<void> {
+    const upperSymbol = symbol.toUpperCase();
+    const key = this.subscriptionKey(upperSymbol, 'trade');
+
+    const handlers = this.tradeHandlers.get(upperSymbol) ?? [];
+    handlers.push(handler);
+    this.tradeHandlers.set(upperSymbol, handlers);
+
+    this.desiredSubscriptions.add(key);
+
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.subscribeIfNeeded(upperSymbol, 'trade');
+      return;
+    }
+
+    await this.connect();
+  }
+
+  public disconnect(): void {
+    this.manuallyDisconnected = true;
+
+    this.stopPing();
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    const ws = this.ws;
+    this.ws = null;
+    this.isConnecting = false;
+
+    if (ws) {
+      ws.removeAllListeners();
+
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
+        ws.close();
+      }
+    }
+
+    this.orderBooks.clear();
+    this.activeSubscriptions.clear();
+    this.desiredSubscriptions.clear();
+    this.orderBookHandlers.clear();
+    this.tradeHandlers.clear();
+  }
+
+  public getOrderBook(symbol: string): OrderBook | null {
+    return this.orderBooks.get(symbol.toUpperCase()) ?? null;
+  }
+
+  public isStale(symbol: string, maxAgeMs = 5_000): boolean {
+    const orderbook = this.getOrderBook(symbol);
+
+    if (!orderbook) {
+      return true;
+    }
+
+    return Date.now() - orderbook.timestamp > maxAgeMs;
+  }
+
+  private subscriptionKey(
+    symbol: string,
+    type: 'depth' | 'trade'
+  ): string {
+    return `${symbol}:${type}`;
+  }
+
+  private subscribeAll(): void {
+    for (const key of this.desiredSubscriptions) {
+      const [symbol, type] = key.split(':') as [
+        string,
+        'depth' | 'trade'
+      ];
+
+      this.subscribeIfNeeded(symbol, type);
+    }
+  }
+
+  private subscribeIfNeeded(symbol: string, type: 'depth' | 'trade'): void {
+    const key = this.subscriptionKey(symbol, type);
+
+    if (this.activeSubscriptions.has(key)) {
+      return;
+    }
+
+    if (this.sendSubscription(symbol, type)) {
+      this.activeSubscriptions.add(key);
+    }
+  }
+
+  private sendSubscription(
+    symbol: string,
+    type: 'depth' | 'trade'
+  ): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    const method = type === 'depth' ? 'sub.depth' : 'sub.deal';
+
+    try {
+      this.ws.send(
+        JSON.stringify({
+          method,
+          param: { symbol },
+          gzip: false,
+        })
+      );
+
+      logger.debug(`Subscribed: ${method} ${symbol}`);
+      return true;
+    } catch (error) {
+      logger.error(
+        `Failed to subscribe ${method} ${symbol}: ${getErrorMessage(error)}`
+      );
+      return false;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.manuallyDisconnected || this.reconnectTimer) {
+      return;
+    }
+
+    const delayMs = Math.min(
+      30_000,
+      1_000 * 2 ** this.reconnectAttempt
+    );
+
     const jitterMs = Math.floor(Math.random() * 500);
+    this.reconnectAttempt++;
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.connect().catch((err) => {
-        logger.error(`Reconnect failed: ${getErrorMessage(err)}`);
+
+      this.connect().catch((error) => {
+        logger.error(`WebSocket reconnect failed: ${getErrorMessage(error)}`);
+        this.scheduleReconnect();
       });
-    }, baseMs + jitterMs);
+    }, delayMs + jitterMs);
   }
 
   private startPing(): void {
     this.stopPing();
-    
+
     this.pingInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.ping();
-        logger.debug('WebSocket ping sent');
       }
-    }, 30000);
+    }, 30_000);
   }
 
   private stopPing(): void {
@@ -127,164 +310,144 @@ export class MexcWebSocket {
     }
   }
 
-  private subscribeAll(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+  private handleMessage(message: unknown): void {
+    if (!message || typeof message !== 'object') {
       return;
     }
 
-    logger.info(`Sending ${this.desiredSubscriptions.size} desired subscriptions`);
+    const payload = message as {
+      channel?: unknown;
+      data?: unknown;
+      symbol?: unknown;
+    };
 
-    for (const key of this.desiredSubscriptions) {
-      if (this.activeSubscriptions.has(key)) {
-        continue;
+    const channel = String(payload.channel ?? '');
+    const symbol = String(payload.symbol ?? '').toUpperCase();
+
+    if (!symbol) {
+      return;
+    }
+
+    if (channel === 'push.depth' && payload.data) {
+      this.handleDepthUpdate(symbol, payload.data);
+      return;
+    }
+
+    if (channel === 'push.deal' && payload.data) {
+      this.handleDealUpdate(symbol, payload.data);
+    }
+  }
+
+  private handleDepthUpdate(symbol: string, rawData: unknown): void {
+    const depthKey = this.subscriptionKey(symbol, 'depth');
+
+    if (!this.desiredSubscriptions.has(depthKey)) {
+      return;
+    }
+
+    if (!rawData || typeof rawData !== 'object') {
+      return;
+    }
+
+    const data = rawData as {
+      bids?: unknown;
+      asks?: unknown;
+      version?: unknown;
+      cts?: unknown;
+      timestamp?: unknown;
+    };
+
+    /*
+     * MEXC присылает incremental depth:
+     * - может быть только одна сторона стакана;
+     * - размер 0 означает удаление price level.
+     *
+     * Поэтому нельзя отбрасывать сообщения с пустыми bids/asks
+     * и нельзя фильтровать size=0 на этапе парсинга.
+     */
+    const bidChanges = this.parseLevels(data.bids);
+    const askChanges = this.parseLevels(data.asks);
+
+    if (bidChanges.length === 0 && askChanges.length === 0) {
+      return;
+    }
+
+    const previous = this.orderBooks.get(symbol);
+
+    const bidMap = new Map<number, number>();
+    const askMap = new Map<number, number>();
+
+    if (previous) {
+      for (const level of previous.bids) {
+        bidMap.set(level.price, level.size);
       }
 
-      const parts = key.split('_');
-      const symbol = parts[0];
-      const type = parts[1] as 'depth' | 'trade';
-
-      this.sendSubscription(symbol, type);
-      this.activeSubscriptions.add(key);
-    }
-  }
-
-  public async subscribeOrderBook(symbol: string, handler: OrderBookHandler): Promise<void> {
-    const upperSymbol = symbol.toUpperCase();
-    const key = `${upperSymbol}_depth`;
-
-    if (!this.orderBookHandlers.has(upperSymbol)) {
-      this.orderBookHandlers.set(upperSymbol, []);
-    }
-    this.orderBookHandlers.get(upperSymbol)!.push(handler);
-
-    if (this.desiredSubscriptions.has(key)) {
-      return;
+      for (const level of previous.asks) {
+        askMap.set(level.price, level.size);
+      }
     }
 
-    this.desiredSubscriptions.add(key);
+    this.applyLevelChanges(bidMap, bidChanges);
+    this.applyLevelChanges(askMap, askChanges);
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.sendSubscription(upperSymbol, 'depth');
-      this.activeSubscriptions.add(key);
-    } else if (!this.isConnecting) {
-      this.connect().catch((err) => {
-        logger.error(`Failed to connect in subscribeOrderBook: ${getErrorMessage(err)}`);
-      });
-    }
-  }
+    const bids = this.toSortedLevels(bidMap, 'bid');
+    const asks = this.toSortedLevels(askMap, 'ask');
 
-  public subscribeTrades(symbol: string, handler: TradeHandler): void {
-    const upperSymbol = symbol.toUpperCase();
-    const key = `${upperSymbol}_trade`;
-
-    if (!this.tradeHandlers.has(upperSymbol)) {
-      this.tradeHandlers.set(upperSymbol, []);
-    }
-    this.tradeHandlers.get(upperSymbol)!.push(handler);
-
-    if (this.desiredSubscriptions.has(key)) {
-      return;
-    }
-
-    this.desiredSubscriptions.add(key);
-
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.sendSubscription(upperSymbol, 'trade');
-      this.activeSubscriptions.add(key);
-    } else if (!this.isConnecting) {
-      this.connect().catch((err) => {
-        logger.error(`Failed to connect in subscribeTrades: ${getErrorMessage(err)}`);
-      });
-    }
-  }
-
-  private sendSubscription(symbol: string, type: 'depth' | 'trade'): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const method = type === 'depth' ? 'sub.depth' : 'sub.deal';
-
-    this.ws.send(
-      JSON.stringify({
-        method,
-        param: { symbol },
-        gzip: false,
-      })
-    );
-
-    logger.debug(`Sent subscription: ${method} ${symbol}`);
-  }
-
-  private handleMessage(message: any): void {
-    const channel = String(message.channel ?? '');
-    const data = message.data;
-    const symbol = String(message.symbol ?? '').toUpperCase();
-
-    if (channel === 'push.depth' && data && symbol) {
-      this.handleDepthUpdate(symbol, data);
-      return;
-    }
-
-    if (channel === 'push.deal' && data && symbol) {
-      this.handleDealUpdate(symbol, data);
-    }
-  }
-
-  private handleDepthUpdate(symbol: string, data: any): void {
-    const bids = this.parseLevels(data.bids);
-    const asks = this.parseLevels(data.asks);
-    const version = Number(data.version ?? 0);
-
-    // Логируем только для PROM и TRUMPOFFICIAL
-    if (symbol === 'PROM_USDT' || symbol === 'TRUMPOFFICIAL_USDT') {
-      logger.debug(
-        `[WS_DEPTH_CHECK] ${symbol} ` +
-        `bids=${bids.length} asks=${asks.length} version=${version} ` +
-        `bid0=${bids[0]?.price ?? 'null'} ask0=${asks[0]?.price ?? 'null'}`
-      );
-    }
-
-    // Игнорируем partial стаканы
+    /*
+     * До первого нормального snapshot одна из сторон может быть пуста.
+     * Не публикуем такой стакан в Scanner, но удерживаем изменения,
+     * чтобы следующий пакет мог собрать валидный two-sided book.
+     */
     if (bids.length === 0 || asks.length === 0) {
       return;
     }
 
-    // Проверяем, есть ли подписка на этот символ
-    const depthKey = `${symbol}_depth`;
-    if (!this.desiredSubscriptions.has(depthKey)) {
-      // Символ не подписан — игнорируем
+    /*
+     * При crossed book не публикуем цену: лучше пропустить update,
+     * чем передать в стратегию невалидный bid >= ask.
+     */
+    if (bids[0].price >= asks[0].price) {
+      logger.warn(
+        `[WS_CROSSED_BOOK] ${symbol} bid=${bids[0].price} ask=${asks[0].price}`
+      );
       return;
     }
 
-    const finalBids = bids.slice(0, 100);
-    const finalAsks = asks.slice(0, 100);
+    const exchangeTimestamp = Number(
+      data.cts ?? data.timestamp ?? Date.now()
+    );
+
+    const timestamp = Number.isFinite(exchangeTimestamp) && exchangeTimestamp > 0
+      ? exchangeTimestamp
+      : Date.now();
 
     const orderbook: OrderBook = {
       symbol,
-      bids: finalBids,
-      asks: finalAsks,
-      timestamp: Number(data.cts ?? data.timestamp ?? Date.now()),
+      bids,
+      asks,
+      timestamp,
     };
 
     this.orderBooks.set(symbol, orderbook);
 
-    if (version > 0) {
-      this.lastVersion.set(symbol, version);
+    const handlers = this.orderBookHandlers.get(symbol) ?? [];
+    for (const handler of handlers) {
+      try {
+        handler(orderbook);
+      } catch (error) {
+        logger.error(
+          `Orderbook handler failed for ${symbol}: ${getErrorMessage(error)}`
+        );
+      }
     }
-
-    logger.debug(`[WS_HANDLERS_CHECK] ${symbol} handlers=${this.orderBookHandlers.get(symbol)?.length ?? 0}`);
-
-    const handlers = this.orderBookHandlers.get(symbol) || [];
-    handlers.forEach(handler => handler(orderbook));
   }
 
-  private parseLevels(levels: unknown): Array<{ price: number; size: number }> {
+  private parseLevels(levels: unknown): PriceLevel[] {
     if (!Array.isArray(levels)) {
       return [];
     }
 
-    const result: Array<{ price: number; size: number }> = [];
+    const result: PriceLevel[] = [];
 
     for (const level of levels) {
       if (!Array.isArray(level) || level.length < 2) {
@@ -294,11 +457,15 @@ export class MexcWebSocket {
       const price = Number(level[0]);
       const size = Number(level[1]);
 
-      if (!Number.isFinite(price) || !Number.isFinite(size)) {
-        continue;
-      }
-
-      if (price <= 0 || size <= 0) {
+      /*
+       * size=0 сохраняем: он нужен для удаления уровня из локального book.
+       */
+      if (
+        !Number.isFinite(price) ||
+        !Number.isFinite(size) ||
+        price <= 0 ||
+        size < 0
+      ) {
         continue;
       }
 
@@ -308,45 +475,93 @@ export class MexcWebSocket {
     return result;
   }
 
-  private handleDealUpdate(symbol: string, data: any): void {
-    const trades = Array.isArray(data) ? data : [data];
+  private applyLevelChanges(
+    levels: Map<number, number>,
+    changes: PriceLevel[]
+  ): void {
+    for (const level of changes) {
+      if (level.size === 0) {
+        levels.delete(level.price);
+      } else {
+        levels.set(level.price, level.size);
+      }
+    }
+  }
 
-    for (const tradeData of trades) {
-      const trade: Trade = {
-        symbol,
-        id: tradeData.id || Date.now(),
-        price: parseFloat(tradeData.price || 0),
-        qty: parseFloat(tradeData.vol || 0),
-        quoteQty: parseFloat(tradeData.amount || 0),
-        time: tradeData.ts || Date.now(),
-        isBuyerMaker: tradeData.side === 'Buy',
+  private toSortedLevels(
+    levels: Map<number, number>,
+    side: 'bid' | 'ask'
+  ): PriceLevel[] {
+    const result = Array.from(levels.entries())
+      .filter(([, size]) => Number.isFinite(size) && size > 0)
+      .map(([price, size]) => ({ price, size }));
+
+    result.sort(
+      side === 'bid'
+        ? (a, b) => b.price - a.price
+        : (a, b) => a.price - b.price
+    );
+
+    return result.slice(0, 100);
+  }
+
+  private handleDealUpdate(symbol: string, rawData: unknown): void {
+    const tradeKey = this.subscriptionKey(symbol, 'trade');
+
+    if (!this.desiredSubscriptions.has(tradeKey)) {
+      return;
+    }
+
+    const items = Array.isArray(rawData) ? rawData : [rawData];
+    const handlers = this.tradeHandlers.get(symbol) ?? [];
+
+    for (const item of items) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+
+      const data = item as {
+        id?: unknown;
+        price?: unknown;
+        vol?: unknown;
+        amount?: unknown;
+        ts?: unknown;
+        side?: unknown;
       };
 
-      const handlers = this.tradeHandlers.get(symbol) || [];
-      handlers.forEach(h => h(trade));
-    }
-  }
+      const price = Number(data.price);
+      const qty = Number(data.vol);
+      const quoteQty = Number(data.amount);
+      const time = Number(data.ts);
 
-  public disconnect(): void {
-    this.stopPing();
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.close();
-      this.ws = null;
-    }
-    this.isConnecting = false;
-    this.orderBooks.clear();
-    this.lastVersion.clear();
-    this.activeSubscriptions.clear();
-    this.desiredSubscriptions.clear();
-  }
+      if (
+        !Number.isFinite(price) ||
+        !Number.isFinite(qty) ||
+        price <= 0 ||
+        qty <= 0
+      ) {
+        continue;
+      }
 
-  public isStale(symbol: string): boolean {
-    const ver = this.lastVersion.get(symbol);
-    return ver === undefined;
+      const trade: Trade = {
+        symbol,
+        id: data.id ? String(data.id) : `${symbol}_${Date.now()}`,
+        price,
+        qty,
+        quoteQty: Number.isFinite(quoteQty) ? quoteQty : price * qty,
+        time: Number.isFinite(time) && time > 0 ? time : Date.now(),
+        isBuyerMaker: String(data.side).toLowerCase() === 'sell',
+      };
+
+      for (const handler of handlers) {
+        try {
+          handler(trade);
+        } catch (error) {
+          logger.error(
+            `Trade handler failed for ${symbol}: ${getErrorMessage(error)}`
+          );
+        }
+      }
+    }
   }
 }
