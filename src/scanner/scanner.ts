@@ -99,7 +99,7 @@ export class Scanner {
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
     try {
       // ✅ Исправленный endpoint для MEXC Futures API v2
-      const url = `${config.mexcBaseUrl}/v2/api/depth?symbol=${encodeURIComponent(symbol)}&limit=5`;
+      const url = `${config.mexcBaseUrl}/v3/api/depth?symbol=${encodeURIComponent(symbol)}&limit=5`;
 
       const response = await fetch(url);
       const rawText = await response.text();
