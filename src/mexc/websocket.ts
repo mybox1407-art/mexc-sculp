@@ -174,26 +174,26 @@ export class MexcWebSocket {
           }
         }
         
-        // ✅ Переклассификация уровней после мерджа
-        const allLevels = [...existing.bids, ...existing.asks];
-        
-        if (allLevels.length > 0) {
-          // Находим mid price
-          const midPrice = allLevels.reduce((s, l) => s + l.price, 0) / allLevels.length;
-          
-          // Разделяем на bids (ниже mid) и asks (выше mid)
-          existing.bids = allLevels
-            .filter(l => l.price < midPrice)
-            .sort((a, b) => b.price - a.price)
-            .slice(0, 100);
-          
-          existing.asks = allLevels
-            .filter(l => l.price >= midPrice)
-            .sort((a, b) => a.price - b.price)
-            .slice(0, 100);
-        }
+        existing.bids.sort((a, b) => b.price - a.price);
+        existing.asks.sort((a, b) => a.price - b.price);
+        existing.bids = existing.bids.slice(0, 100);
+        existing.asks = existing.asks.slice(0, 100);
         
         existing.timestamp = data.cts || data.timestamp || Date.now();
+
+        // ✅ Один защитный лог
+        if (
+          existing.bids.length === 0 ||
+          existing.asks.length === 0 ||
+          existing.bids[0].price >= existing.asks[0].price
+        ) {
+          logger.warn(
+            `[INVALID_ORDERBOOK:WS] ${symbol} ` +
+            `bids=${existing.bids.length} asks=${existing.asks.length} ` +
+            `bid0=${JSON.stringify(existing.bids[0] ?? null)} ` +
+            `ask0=${JSON.stringify(existing.asks[0] ?? null)}`
+          );
+        }
         
         this.orderBooks.set(symbol, existing);
         
