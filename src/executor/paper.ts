@@ -1,7 +1,7 @@
 import { PaperOrder, PaperPosition, TradeResult } from './types';
 import { Signal } from '../signals/types';
 import { OrderBook } from '../mexc/types';
-import { createPaperOrder, simulateOrderFill, calculateExitPrice, shouldExitPosition, calculateTradeResult } from './orders';
+import { createPaperOrder, simulateOrderFill, calculateExitPrice, shouldExitPosition, calculateTradeResult, getBestPrices } from './orders';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { logPosition, logTrade } from '../storage/csv';
@@ -174,9 +174,16 @@ export class PaperExecutor {
 
     const position = tracking.position;
     
-    logger.debug(`[${symbol}] OB: bid=${orderbook.bids[0].price}, ask=${orderbook.asks[0].price}, ts=${Date.now()}`);
+    // ✅ Используем getBestPrices вместо прямого доступа к bids[0]/asks[0]
+    const prices = getBestPrices(orderbook);
+    if (!prices) {
+      logger.warn(`[${symbol}] Skipping update: invalid orderbook`);
+      return null;
+    }
     
-    const currentPrice = position.side === 'BUY' ? orderbook.bids[0].price : orderbook.asks[0].price;
+    logger.debug(`[${symbol}] OB: bid=${prices.bestBid}, ask=${prices.bestAsk}, ts=${Date.now()}`);
+    
+    const currentPrice = position.side === 'BUY' ? prices.bestBid : prices.bestAsk;
     position.currentPrice = currentPrice;
     position.unrealizedPnl = (currentPrice - position.entryPrice) * position.size * (position.side === 'BUY' ? 1 : -1);
 
