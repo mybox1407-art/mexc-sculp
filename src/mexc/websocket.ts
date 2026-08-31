@@ -188,12 +188,8 @@ export class MexcWebSocket {
     const bids = this.parseLevels(data.bids);
     const asks = this.parseLevels(data.asks);
 
+    // Тихо пропускаем сообщения без полноценного стакана
     if (bids.length === 0 || asks.length === 0) {
-      logger.warn(
-        `[EMPTY_ORDERBOOK:WS] ${symbol} ` +
-        `bids=${bids.length} asks=${asks.length} ` +
-        `version=${data.version ?? 'n/a'}`
-      );
       return;
     }
 
