@@ -8,11 +8,11 @@ const TAKER_FEE = 0.00032; // 0.032%
 
 let orderCounter = 0;
 
-function isValidPrice(value: unknown): value is number {
+export function isValidPrice(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
-function getBestPrices(orderbook: OrderBook | null | undefined): {
+export function getBestPrices(orderbook: OrderBook | null | undefined): {
   bestBid: number;
   bestAsk: number;
 } | null {
