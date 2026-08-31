@@ -182,19 +182,25 @@ export class Scanner {
       );
       
       if (!isSupported) {
+        logger.debug(`Support filter: ${symbol} - not supported (walls=${wallResult.hasWalls}, mismatch=${volumeResult.hasMismatch}, revival=${revivalPattern})`);
         continue;
       }
       totalSupported++;
       
       if (volMetrics.atr < config.minAtr1m) {
+        logger.debug(`ATR filter: ${symbol} atr=${volMetrics.atr.toFixed(6)} < ${config.minAtr1m}`);
         continue;
       }
       totalAtr++;
       
       if (Math.abs(parseFloat(ticker.priceChangePercent)) < config.min24hChangePct) {
+        logger.debug(`Change24h filter: ${symbol} change24h=${Math.abs(parseFloat(ticker.priceChangePercent)).toFixed(2)}% < ${config.min24hChangePct}%`);
         continue;
       }
       totalChange24h++;
+      
+      // ✅ Токен прошёл все фильтры
+      logger.info(`[TOKEN_PASSED] ${symbol} | depth=${depthMetrics.totalDepth.toFixed(2)}$ | spread=${spreadPct.toFixed(2)}% | atr=${volMetrics.atr.toFixed(6)} | change24h=${parseFloat(ticker.priceChangePercent).toFixed(2)}%`);
       
       results.push({
         symbol,
@@ -214,6 +220,10 @@ export class Scanner {
     this.scannedTokens = results;
     logger.info(`Scan: ${totalWithOrderbook} orderbooks, ${totalWithDepth} depth>${config.minLiquidityDepth}, ${totalWithCandles} candles, ${totalSupported} supported, ${totalAtr} atr, ${totalChange24h} change24h, ${totalFiltered} filtered`);
     logger.info(`Scan complete: ${results.length} tokens matched`);
+    
+    if (results.length === 0) {
+      logger.warn(`[NO_TOKENS] No tokens passed all filters. Check: MIN_LIQUIDITY_DEPTH=${config.minLiquidityDepth}, MAX_SPREAD_PCT=${config.maxSpreadPct}, MIN_ATR_1M=${config.minAtr1m}, MIN_24H_CHANGE_PCT=${config.min24hChangePct}`);
+    }
     
     return results;
   }
