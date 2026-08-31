@@ -78,15 +78,6 @@ export class MexcWebSocket {
     this.ws.on('message', (data: WebSocket.Data) => {
       try {
         const message = JSON.parse(data.toString());
-        
-        // ✅ Лог всех входящих сообщений
-        logger.debug(
-          `[WS_RAW] channel=${message.channel ?? 'n/a'} ` +
-          `symbol=${message.symbol ?? 'n/a'} ` +
-          `bids=${Array.isArray(message.data?.bids) ? message.data.bids.length : 0} ` +
-          `asks=${Array.isArray(message.data?.asks) ? message.data.asks.length : 0}`
-        );
-        
         this.handleMessage(message);
       } catch (error) {
         logger.error(`Error parsing WebSocket message: ${getErrorMessage(error)}`);
@@ -176,20 +167,37 @@ export class MexcWebSocket {
     const bids = this.parseLevels(data.bids);
     const asks = this.parseLevels(data.asks);
 
-    if (bids.length === 0 || asks.length === 0) {
+    if (bids.length === 0 && asks.length === 0) {
       return;
     }
 
-    bids.sort((a, b) => b.price - a.price);
-    asks.sort((a, b) => a.price - b.price);
+    let finalBids = bids;
+    let finalAsks = asks;
 
-    const bestBid = bids[0];
-    const bestAsk = asks[0];
+    if (bids.length === 0 || asks.length === 0) {
+      const cached = this.orderBooks.get(symbol);
+      
+      if (cached) {
+        if (bids.length === 0 && asks.length > 0) {
+          finalBids = cached.bids;
+        } else if (asks.length === 0 && bids.length > 0) {
+          finalAsks = cached.asks;
+        }
+      } else {
+        return;
+      }
+    }
+
+    finalBids.sort((a, b) => b.price - a.price);
+    finalAsks.sort((a, b) => a.price - b.price);
+
+    const bestBid = finalBids[0];
+    const bestAsk = finalAsks[0];
 
     if (bestBid.price >= bestAsk.price) {
       logger.warn(
         `[INVALID_ORDERBOOK:WS] ${symbol} ` +
-        `bids=${bids.length} asks=${asks.length} ` +
+        `bids=${finalBids.length} asks=${finalAsks.length} ` +
         `bid0=${JSON.stringify(bestBid)} ` +
         `ask0=${JSON.stringify(bestAsk)} ` +
         `version=${data.version ?? 'n/a'}`
@@ -199,8 +207,8 @@ export class MexcWebSocket {
 
     const orderbook: OrderBook = {
       symbol,
-      bids: bids.slice(0, 100),
-      asks: asks.slice(0, 100),
+      bids: finalBids.slice(0, 100),
+      asks: finalAsks.slice(0, 100),
       timestamp: Number(data.cts ?? data.timestamp ?? Date.now()),
     };
 
