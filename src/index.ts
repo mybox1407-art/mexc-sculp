@@ -3,13 +3,86 @@ import { PaperExecutor } from './executor/paper';
 import { generateSignals } from './signals/generator';
 import { initializeCsvFiles, logScan, logSignal } from './storage/csv';
 import { calculateStats } from './executor/stats';
-import { sendTradeOpenedAlert, sendTradeClosedAlert, sendDailyReport, sendErrorAlert } from './telegram/notifier';
+import {
+  sendTradeOpenedAlert,
+  sendTradeClosedAlert,
+  sendDailyReport,
+  sendErrorAlert,
+} from './telegram/notifier';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { sleep } from './utils/helpers';
 import { getErrorMessage } from './utils/error';
 
-async function main() {
+const ORDERBOOK_MAX_AGE_MS = 5_000;
+
+function isValidOrderbook(
+  orderbook: {
+    bids: Array<{ price: number }>;
+    asks: Array<{ price: number }>;
+    timestamp: number;
+  } | null
+): boolean {
+  if (
+    !orderbook ||
+    orderbook.bids.length === 0 ||
+    orderbook.asks.length === 0
+  ) {
+    return false;
+  }
+
+  const bestBid = orderbook.bids[0]?.price;
+  const bestAsk = orderbook.asks[0]?.price;
+
+  if (
+    !Number.isFinite(bestBid) ||
+    !Number.isFinite(bestAsk) ||
+    bestBid <= 0 ||
+    bestAsk <= 0 ||
+    bestBid >= bestAsk
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function isFreshOrderbook(
+  orderbook: {
+    timestamp: number;
+  } | null
+): boolean {
+  if (!orderbook || !Number.isFinite(orderbook.timestamp)) {
+    return false;
+  }
+
+  return Date.now() - orderbook.timestamp <= ORDERBOOK_MAX_AGE_MS;
+}
+
+function resolveExitReason(
+  result: {
+    side: 'BUY' | 'SELL';
+    entryPrice: number;
+    exitPrice: number;
+  }
+): string {
+  const pnlPct =
+    ((result.exitPrice - result.entryPrice) / result.entryPrice) *
+    100 *
+    (result.side === 'BUY' ? 1 : -1);
+
+  if (pnlPct >= config.tpPct2) {
+    return 'TP2';
+  }
+
+  if (pnlPct >= config.tpPct1) {
+    return 'TP1';
+  }
+
+  return 'STOP';
+}
+
+async function main(): Promise<void> {
   logger.info('Starting MEXC Scalper Bot...');
 
   try {
@@ -23,170 +96,195 @@ async function main() {
 
     let lastReportTime = Date.now();
     const reportInterval = 24 * 60 * 60 * 1000;
+    const positionUpdateInterval =
+      config.positionUpdateIntervalMs || 2_000;
 
-    // ✅ Отдельный цикл обновления позиций (раз в 2 секунды) — по WS-стакану из кэша
-    const positionUpdateInterval = config.positionUpdateIntervalMs || 2000;
-    
-    setInterval(async () => {
-      const openPositions = executor.getPositions();
-      
-      if (openPositions.length === 0) {
-        return;
-      }
+    let positionUpdateInProgress = false;
 
-      logger.info(`📊 Open positions: ${openPositions.length}`);
-      
-      for (const position of openPositions) {
-        // ✅ Берём свежий WS-стакан из Scanner (обновляется WebSocket-хендлером)
-        let orderbook = scanner.getOrderbookFromCache(position.symbol);
-
-        logger.debug(
-          `[INDEX_CACHE_CHECK] ${position.symbol} ` +
-          `scannerCacheBid=${scanner.getOrderbookFromCache(position.symbol)?.bids[0]?.price} ` +
-          `orderbookBid=${orderbook?.bids[0]?.price}`
-        );
-
-        // ✅ Отладочный лог
-        const scannerOb = scanner.getOrderbookFromCache(position.symbol);
-        const executorOb = executor.getLastOrderbook(position.symbol);
-        logger.debug(
-          `[INDEX_OB_DEBUG] ${position.symbol} ` +
-          `scannerBid=${scannerOb?.bids[0]?.price ?? 'null'} scannerAsk=${scannerOb?.asks[0]?.price ?? 'null'} ` +
-          `executorBid=${executorOb?.bids[0]?.price ?? 'null'} executorAsk=${executorOb?.asks[0]?.price ?? 'null'} ` +
-          `usedBid=${orderbook?.bids[0]?.price ?? 'null'} usedAsk=${orderbook?.asks[0]?.price ?? 'null'}`
-        );
-
-        // ✅ Fallback на кэш Executor если WS ещё не прислал
-        if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-          orderbook = executor.getLastOrderbook(position.symbol);
+    /*
+     * Открытые позиции обновляются только текущим стаканом Scanner.
+     * Scanner получает его напрямую из WebSocket.
+     *
+     * Кэш executor — не источник цены; он не должен перезаписывать
+     * свежий WS snapshot старыми token.orderbook из scan().
+     */
+    setInterval(() => {
+      void (async () => {
+        if (positionUpdateInProgress) {
+          return;
         }
 
-        // ✅ Логируем проверку WS-стакана
-        logger.info(
-          `[UPDATE_OB_WS] ${position.symbol} ` +
-          `wsOb=${orderbook ? 'present' : 'null'} ` +
-          `bids=${orderbook?.bids?.length ?? 0} ` +
-          `asks=${orderbook?.asks?.length ?? 0}`
-        );
+        positionUpdateInProgress = true;
 
-        // ✅ Fallback на REST только если WS полностью мёртвый
-        if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-          logger.warn(`[UPDATE_OB_WS_DEAD] ${position.symbol} fetching REST fallback`);
-          orderbook = await scanner.getOrderbookFromApi(position.symbol);
+        try {
+          const openPositions = executor.getPositions();
 
-          if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-            logger.warn(`[UPDATE_OB_REST_DEAD] ${position.symbol} skipping update`);
-            continue;
+          if (openPositions.length === 0) {
+            return;
           }
-        }
 
-        executor.cacheOrderbook(position.symbol, orderbook);
-        
-        const result = executor.updatePositions(orderbook, position.symbol);
-        if (result) {
-          let exitReason = 'UNKNOWN';
-          const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
-          if (pnlPct >= config.tpPct2) {
-            exitReason = 'TP2';
-          } else if (pnlPct >= config.tpPct1) {
-            exitReason = 'TP1';
-          } else {
-            exitReason = 'STOP';
+          for (const position of openPositions) {
+            let orderbook = scanner.getOrderbookFromCache(position.symbol);
+
+            /*
+             * Если WS-кэш отсутствует, битый или устарел — берём REST snapshot.
+             * Этот REST snapshot используется только для текущего обновления позиции.
+             */
+            if (!isValidOrderbook(orderbook) || !isFreshOrderbook(orderbook)) {
+              orderbook = await scanner.getOrderbookFromApi(position.symbol);
+            }
+
+            if (!isValidOrderbook(orderbook)) {
+              logger.warn(
+                `[POSITION_ORDERBOOK_UNAVAILABLE] ${position.symbol}; update skipped`
+              );
+              continue;
+            }
+
+            executor.cacheOrderbook(position.symbol, orderbook);
+
+            const result = executor.updatePositions(
+              orderbook,
+              position.symbol
+            );
+
+            if (!result) {
+              continue;
+            }
+
+            sendTradeClosedAlert(
+              result,
+              resolveExitReason(result),
+              executor.getBalance(),
+              executor.getFreeBalance()
+            );
           }
-          
-          sendTradeClosedAlert(
-            result,
-            exitReason,
-            executor.getBalance(),
-            executor.getFreeBalance()
+
+          for (const position of executor.getPositions()) {
+            const pnlPct =
+              ((position.currentPrice - position.entryPrice) /
+                position.entryPrice) *
+              100 *
+              (position.side === 'BUY' ? 1 : -1);
+
+            const stopDistancePct =
+              ((position.signal.stop - position.entryPrice) /
+                position.entryPrice) *
+              100 *
+              (position.side === 'BUY' ? -1 : 1);
+
+            const targetDistancePct =
+              ((position.signal.target - position.entryPrice) /
+                position.entryPrice) *
+              100 *
+              (position.side === 'BUY' ? 1 : -1);
+
+            logger.info(
+              `${position.symbol} | ${position.side} | ` +
+              `Entry: ${position.entryPrice.toFixed(4)} -> ` +
+              `Current: ${position.currentPrice.toFixed(4)} | ` +
+              `PnL: ${position.unrealizedPnl.toFixed(2)}$ ` +
+              `(${pnlPct.toFixed(2)}%) | ` +
+              `SL: ${stopDistancePct.toFixed(2)}% | ` +
+              `TP: ${targetDistancePct.toFixed(2)}%`
+            );
+          }
+        } catch (error) {
+          logger.error(
+            `Position update error: ${getErrorMessage(error)}`
           );
+        } finally {
+          positionUpdateInProgress = false;
         }
-      }
-
-      // ✅ 2. Логирование открытых позиций (после обновления!)
-      const updatedPositions = executor.getPositions();
-      for (const pos of updatedPositions) {
-        const pnlPct = (pos.currentPrice - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? 1 : -1);
-        const pnl = pos.unrealizedPnl;
-        const slDist = ((pos.signal.stop - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? -1 : 1)).toFixed(2);
-        const tpDist = ((pos.signal.target - pos.entryPrice) / pos.entryPrice * 100 * (pos.side === 'BUY' ? 1 : -1)).toFixed(2);
-        
-        logger.info(
-          `${pos.symbol} | ${pos.side} | ` +
-          `Entry: ${pos.entryPrice.toFixed(4)} → Current: ${pos.currentPrice.toFixed(4)} | ` +
-          `PnL: ${pnl.toFixed(2)}$ (${pnlPct.toFixed(2)}%) | ` +
-          `SL: ${slDist}% | TP: ${tpDist}%`
-        );
-      }
+      })();
     }, positionUpdateInterval);
 
-    // ✅ Основной цикл (сканирование + исполнение сигналов)
     while (true) {
       const scanTime = Date.now();
       const scannedTokens = scanner.getScannedTokens();
-      logger.info(`Scanned tokens: ${scannedTokens.length}`);
+
       executor.incrementScans();
+
+      logger.info(`Scanned tokens: ${scannedTokens.length}`);
 
       logScan(scannedTokens, scanTime);
 
-      // ✅ 1. Кэшируем orderbook для всех токенов
-      for (const token of scannedTokens) {
-        executor.cacheOrderbook(token.symbol, token.orderbook);
-      }
+      /*
+       * ВАЖНО:
+       * Не делаем executor.cacheOrderbook(token.symbol, token.orderbook)
+       * для всех scannedTokens. Это старые снимки, сформированные во время
+       * предыдущего scan(), и они могут перезаписывать свежий WS-стакан.
+       */
 
-      // ✅ 2. Генерируем и исполняем сигналы
       for (const token of scannedTokens) {
-        const signals = generateSignals(token.candles, token.orderbook, token.atr);
+        if (!isValidOrderbook(token.orderbook)) {
+          continue;
+        }
+
+        const signals = generateSignals(
+          token.candles,
+          token.orderbook,
+          token.atr
+        );
 
         for (const signal of signals) {
           if (executor.hasOpenPosition(signal.symbol)) {
-            logger.debug(`Position already open for ${signal.symbol}, skipping signal`);
-            continue;
-          }
-          
-          if (executor.isOnCooldown(signal.symbol)) {
-            logger.debug(`Cooldown active for ${signal.symbol}, skipping signal`);
+            logger.debug(
+              `Position already open for ${signal.symbol}, signal skipped`
+            );
             continue;
           }
 
-          // ✅ Используем свежий orderbook для исполнения
+          if (executor.isOnCooldown(signal.symbol)) {
+            logger.debug(
+              `Cooldown active for ${signal.symbol}, signal skipped`
+            );
+            continue;
+          }
+
+          /*
+           * Перед открытием используем REST snapshot: это отдельная проверка
+           * текущей цены исполнения. Если REST временно не работает — свежий WS.
+           */
           let orderbook = await scanner.getOrderbookFromApi(signal.symbol);
 
-          // ✅ Логируем проверку REST-стакана перед исполнением
-          logger.info(
-            `[EXEC_OB_CHECK] ${signal.symbol} ` +
-            `restOb=${orderbook ? 'present' : 'null'} ` +
-            `bids=${orderbook?.bids?.length ?? 0} ` +
-            `asks=${orderbook?.asks?.length ?? 0} ` +
-            `bid0=${JSON.stringify(orderbook?.bids?.[0] ?? null)} ` +
-            `ask0=${JSON.stringify(orderbook?.asks?.[0] ?? null)}`
-          );
+          if (!isValidOrderbook(orderbook)) {
+            const wsOrderbook = scanner.getOrderbookFromCache(signal.symbol);
 
-          // Если REST вернул null или пустую сторону — fallback на WebSocket
-          if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-            logger.warn(`[EXEC_OB_FALLBACK] ${signal.symbol} using WebSocket fallback`);
-            orderbook = token.orderbook;
+            if (
+              isValidOrderbook(wsOrderbook) &&
+              isFreshOrderbook(wsOrderbook)
+            ) {
+              orderbook = wsOrderbook;
+              logger.warn(
+                `[EXEC_ORDERBOOK_WS_FALLBACK] ${signal.symbol}`
+              );
+            }
+          }
+
+          if (!isValidOrderbook(orderbook)) {
+            logger.warn(
+              `[EXEC_ORDERBOOK_UNAVAILABLE] ${signal.symbol}; signal skipped`
+            );
+
+            logSignal(signal, false);
+            continue;
           }
 
           const order = executor.executeSignal(signal, orderbook);
 
-          // ✅ Логируем результат исполнения
           logSignal(signal, order !== null);
 
           if (!order) {
-            logger.debug(`Signal not executed: ${signal.type} ${signal.symbol} ${signal.side}`);
             continue;
           }
 
-          logger.info(`Executed signal: ${signal.type} ${signal.symbol} ${signal.side}`);
-          
           const positionValue = order.size * order.avgFillPrice;
-          
+
           logger.info(
-            `📊 Before Telegram: Balance=${executor.getBalance().toFixed(2)}, ` +
-            `Free=${executor.getFreeBalance().toFixed(2)}`
+            `Executed signal: ${signal.type} ${signal.symbol} ${signal.side}`
           );
-          
+
           sendTradeOpenedAlert(
             signal,
             order.size,
@@ -198,22 +296,29 @@ async function main() {
         }
       }
 
-      // ✅ 3. Daily report
       if (Date.now() - lastReportTime >= reportInterval) {
         const stats = calculateStats(executor.getTradeResults());
         const activityStats = executor.getActivityStats();
-        sendDailyReport(stats, executor.getBalance(), activityStats);
+
+        sendDailyReport(
+          stats,
+          executor.getBalance(),
+          activityStats
+        );
+
         lastReportTime = Date.now();
       }
 
       await sleep(config.scanIntervalMs);
     }
   } catch (error) {
-    const errMessage = getErrorMessage(error);
-    logger.error(`Fatal error: ${errMessage}`);
-    sendErrorAlert(`Fatal error: ${errMessage}`);
+    const message = getErrorMessage(error);
+
+    logger.error(`Fatal error: ${message}`);
+    sendErrorAlert(`Fatal error: ${message}`);
+
     process.exit(1);
   }
 }
 
-main();
+void main();
