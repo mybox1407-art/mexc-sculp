@@ -24,7 +24,7 @@ async function main() {
     let lastReportTime = Date.now();
     const reportInterval = 24 * 60 * 60 * 1000;
 
-    // ✅ Отдельный цикл обновления позиций (раз в 2 секунды)
+    // ✅ Отдельный цикл обновления позиций (раз в 2 секунды) — по WS-стакану из кэша
     const positionUpdateInterval = config.positionUpdateIntervalMs || 2000;
     
     setInterval(async () => {
@@ -37,47 +37,48 @@ async function main() {
       logger.info(`📊 Open positions: ${openPositions.length}`);
       
       for (const position of openPositions) {
-        // Получаем свежий orderbook через REST
-        let orderbook = await scanner.getOrderbookFromApi(position.symbol);
+        // ✅ Берём текущий WS-стакан из кэша (последний дифф от MEXC)
+        let orderbook = executor.getLastOrderbook(position.symbol);
 
-        // ✅ Логируем проверку REST-стакана
+        // ✅ Логируем проверку WS-стакана
         logger.info(
-          `[UPDATE_OB_CHECK] ${position.symbol} ` +
-          `restOb=${orderbook ? 'present' : 'null'} ` +
+          `[UPDATE_OB_WS] ${position.symbol} ` +
+          `wsOb=${orderbook ? 'present' : 'null'} ` +
           `bids=${orderbook?.bids?.length ?? 0} ` +
           `asks=${orderbook?.asks?.length ?? 0}`
         );
 
-        // Если REST вернул null или пустую сторону — fallback на кэш
+        // ✅ Fallback на REST только если WS полностью мёртвый
         if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-          logger.warn(`[UPDATE_OB_FALLBACK] ${position.symbol} using cached orderbook`);
-          orderbook = executor.getLastOrderbook(position.symbol);
-        }
-        
-        if (orderbook) {
-          executor.cacheOrderbook(position.symbol, orderbook);
-          
-          const result = executor.updatePositions(orderbook, position.symbol);
-          if (result) {
-            let exitReason = 'UNKNOWN';
-            const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
-            if (pnlPct >= config.tpPct2) {
-              exitReason = 'TP2';
-            } else if (pnlPct >= config.tpPct1) {
-              exitReason = 'TP1';
-            } else {
-              exitReason = 'STOP';
-            }
-            
-            sendTradeClosedAlert(
-              result,
-              exitReason,
-              executor.getBalance(),
-              executor.getFreeBalance()
-            );
+          logger.warn(`[UPDATE_OB_WS_DEAD] ${position.symbol} fetching REST fallback`);
+          orderbook = await scanner.getOrderbookFromApi(position.symbol);
+
+          if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
+            logger.warn(`[UPDATE_OB_REST_DEAD] ${position.symbol} skipping update`);
+            continue;
           }
-        } else {
-          logger.debug(`No orderbook for ${position.symbol}, skipping update`);
+        }
+
+        executor.cacheOrderbook(position.symbol, orderbook);
+        
+        const result = executor.updatePositions(orderbook, position.symbol);
+        if (result) {
+          let exitReason = 'UNKNOWN';
+          const pnlPct = (result.exitPrice - result.entryPrice) / result.entryPrice * 100 * (result.side === 'BUY' ? 1 : -1);
+          if (pnlPct >= config.tpPct2) {
+            exitReason = 'TP2';
+          } else if (pnlPct >= config.tpPct1) {
+            exitReason = 'TP1';
+          } else {
+            exitReason = 'STOP';
+          }
+          
+          sendTradeClosedAlert(
+            result,
+            exitReason,
+            executor.getBalance(),
+            executor.getFreeBalance()
+          );
         }
       }
 
