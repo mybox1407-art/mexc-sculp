@@ -63,13 +63,6 @@ export class Scanner {
     const orderBookHandler: OrderBookHandler = (orderbook) => {
       this.orderbooks.set(symbol, orderbook);
       
-      logger.debug(
-        `[SCANNER_OB] ${symbol} ` +
-        `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
-        `bid0=${orderbook.bids[0]?.price} ask0=${orderbook.asks[0]?.price} ` +
-        `ts=${orderbook.timestamp}`
-      );
-      
       if (!this.orderbookHistory.has(symbol)) {
         this.orderbookHistory.set(symbol, []);
       }
@@ -93,63 +86,29 @@ export class Scanner {
     
     this.mexcWs.subscribeOrderBook(symbol, orderBookHandler);
     this.mexcWs.subscribeTrades(symbol, tradeHandler);
-    
-    logger.info(`[SUBSCRIBE] ${symbol} depth+trade`);
   }
 
-  /**
-   * ✅ Polling orderbook через REST API для открытых позиций.
-   *
-   * MEXC Futures API endpoint:
-   * GET /api/v1/contract/depth/{symbol}
-   * Пример: https://api.mexc.com/api/v1/contract/depth/RIVER_USDT
-   *
-   * Возвращает null при HTTP-ошибке, пустом или невалидном ответе.
-   */
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
     try {
-      // ✅ Правильный endpoint для MEXC Futures API
       const url = `${config.mexcBaseUrl}/api/v1/contract/depth/${encodeURIComponent(symbol)}`;
 
       const response = await fetch(url);
       const rawText = await response.text();
 
-      logger.info(
-        `[REST_OB_HTTP] ${symbol} status=${response.status} url=${url}`
-      );
-
       if (!response.ok) {
-        logger.warn(`[REST_OB_ERROR] ${symbol} HTTP ${response.status}`);
         return null;
       }
 
       const data = JSON.parse(rawText);
 
-      // Futures API возвращает { success, code, data: { bids, asks, cts, ... } }
       const payload = data.data ?? data;
       const bidsRaw = payload?.bids;
       const asksRaw = payload?.asks;
 
-      logger.info(
-        `[REST_OB_PARSED] ${symbol} ` +
-        `success=${String(data.success ?? 'N/A')} ` +
-        `code=${String(data.code ?? 'N/A')} ` +
-        `bidsLen=${Array.isArray(bidsRaw) ? bidsRaw.length : 'N/A'} ` +
-        `asksLen=${Array.isArray(asksRaw) ? asksRaw.length : 'N/A'}`
-      );
-
       if (!Array.isArray(bidsRaw) || !Array.isArray(asksRaw)) {
-        logger.warn(`[REST_OB_INVALID] ${symbol} no bids/asks in response`);
         return null;
       }
 
-      /*
-       * MEXC Futures level format:
-       * [price, orderCount, quantity]
-       *
-       * price    = row[0]
-       * quantity = row[2]  <-- размер, а не row[1]
-       */
       const orderbook: OrderBook = {
         symbol,
         bids: bidsRaw.map((row: any[]) => ({
@@ -163,25 +122,12 @@ export class Scanner {
         timestamp: Date.now(),
       };
 
-      logger.info(
-        `[REST_OB_RESULT] ${symbol} ` +
-        `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
-        `bid0=${JSON.stringify(orderbook.bids[0] ?? null)} ` +
-        `ask0=${JSON.stringify(orderbook.asks[0] ?? null)}`
-      );
-
-      // Если одна из сторон пустая — считаем стакан невалидным.
       if (orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-        logger.warn(
-          `[REST_OB_EMPTY_SIDE] ${symbol} ` +
-          `bids=${orderbook.bids.length} asks=${orderbook.asks.length}`
-        );
         return null;
       }
 
       return orderbook;
     } catch (error) {
-      logger.warn(`[REST_OB_EXCEPTION] ${symbol} ${String(error)}`);
       return null;
     }
   }
@@ -192,18 +138,9 @@ export class Scanner {
     this.tickers = new Map((await this.mexcApi.getTickers24h()).map(t => [t.symbol, t]));
     
     const results: ScannedToken[] = [];
-    let totalWithOrderbook = 0;
-    let totalWithDepth = 0;
-    let totalWithCandles = 0;
-    let totalSupported = 0;
-    let totalAtr = 0;
-    let totalChange24h = 0;
-    let totalFiltered = 0;
     
     for (const [symbol, ticker] of this.tickers.entries()) {
-      // ✅ Фильтр исключённых токенов
       if (config.excludedTokens.includes(symbol)) {
-        logger.debug(`Excluded token: ${symbol}`);
         continue;
       }
 
@@ -213,23 +150,15 @@ export class Scanner {
       if (!orderbook) {
         continue;
       }
-      totalWithOrderbook++;
       
       const depthMetrics = calculateDepth(orderbook, 5);
       const spreadPct = calculateSpreadPct(orderbook);
       
-      // ✅ Фильтр по ликвидности: мин. $50k в стакане
       if (depthMetrics.totalDepth < config.minLiquidityDepth) {
-        logger.debug(`Liquidity filter: ${symbol} depth=${depthMetrics.totalDepth.toFixed(2)} < ${config.minLiquidityDepth}`);
-        totalFiltered++;
         continue;
       }
-      totalWithDepth++;
 
-      // ✅ Фильтр по спреду: макс. 0.5%
       if (spreadPct > config.maxSpreadPct) {
-        logger.debug(`Spread filter: ${symbol} spread=${spreadPct.toFixed(2)}% > ${config.maxSpreadPct}%`);
-        totalFiltered++;
         continue;
       }
       
@@ -242,7 +171,6 @@ export class Scanner {
           continue;
         }
       }
-      totalWithCandles++;
       
       const volMetrics = calculateVolatilityMetrics(candles, parseFloat(ticker.priceChangePercent));
       
@@ -261,25 +189,16 @@ export class Scanner {
       );
       
       if (!isSupported) {
-        logger.debug(`Support filter: ${symbol} - not supported (walls=${wallResult.hasWalls}, mismatch=${volumeResult.hasMismatch}, revival=${revivalPattern})`);
         continue;
       }
-      totalSupported++;
       
       if (volMetrics.atr < config.minAtr1m) {
-        logger.debug(`ATR filter: ${symbol} atr=${volMetrics.atr.toFixed(6)} < ${config.minAtr1m}`);
         continue;
       }
-      totalAtr++;
       
       if (Math.abs(parseFloat(ticker.priceChangePercent)) < config.min24hChangePct) {
-        logger.debug(`Change24h filter: ${symbol} change24h=${Math.abs(parseFloat(ticker.priceChangePercent)).toFixed(2)}% < ${config.min24hChangePct}%`);
         continue;
       }
-      totalChange24h++;
-      
-      // ✅ Токен прошёл все фильтры
-      logger.info(`[TOKEN_PASSED] ${symbol} | depth=${depthMetrics.totalDepth.toFixed(2)}$ | spread=${spreadPct.toFixed(2)}% | atr=${volMetrics.atr.toFixed(6)} | change24h=${parseFloat(ticker.priceChangePercent).toFixed(2)}%`);
       
       results.push({
         symbol,
@@ -297,12 +216,7 @@ export class Scanner {
     }
     
     this.scannedTokens = results;
-    logger.info(`Scan: ${totalWithOrderbook} orderbooks, ${totalWithDepth} depth>${config.minLiquidityDepth}, ${totalWithCandles} candles, ${totalSupported} supported, ${totalAtr} atr, ${totalChange24h} change24h, ${totalFiltered} filtered`);
     logger.info(`Scan complete: ${results.length} tokens matched`);
-    
-    if (results.length === 0) {
-      logger.warn(`[NO_TOKENS] No tokens passed all filters. Check: MIN_LIQUIDITY_DEPTH=${config.minLiquidityDepth}, MAX_SPREAD_PCT=${config.maxSpreadPct}, MIN_ATR_1M=${config.minAtr1m}, MIN_24H_CHANGE_PCT=${config.min24hChangePct}`);
-    }
     
     return results;
   }
