@@ -138,24 +138,6 @@ export class MexcWebSocket {
         const handlers = this.orderBookHandlers.get(symbol) || [];
         handlers.forEach(h => h(orderbook));
       } else {
-        // ✅ Лог: проверяем инверсию в диффе от MEXC
-        const rawBids = (data.bids || []).map((b: any) => parseFloat(b[0]));
-        const rawAsks = (data.asks || []).map((a: any) => parseFloat(a[0]));
-        
-        if (rawBids.length > 0 && rawAsks.length > 0) {
-          const maxBid = Math.max(...rawBids);
-          const minAsk = Math.min(...rawAsks);
-          
-          if (maxBid >= minAsk) {
-            logger.warn(
-              `[INVERTED_DIFF] ${symbol} ` +
-              `maxBid=${maxBid} minAsk=${minAsk} ` +
-              `bids=${JSON.stringify(rawBids.slice(0, 5))} ` +
-              `asks=${JSON.stringify(rawAsks.slice(0, 5))}`
-            );
-          }
-        }
-        
         const bidsUpdate = (data.bids || []).map((b: any) => ({
           price: parseFloat(b[0]),
           size: parseFloat(b[1]),
@@ -192,26 +174,26 @@ export class MexcWebSocket {
           }
         }
         
-        existing.bids.sort((a, b) => b.price - a.price);
-        existing.asks.sort((a, b) => a.price - b.price);
-        existing.bids = existing.bids.slice(0, 100);
-        existing.asks = existing.asks.slice(0, 100);
+        // ✅ Переклассификация уровней после мерджа
+        const allLevels = [...existing.bids, ...existing.asks];
+        
+        if (allLevels.length > 0) {
+          // Находим mid price
+          const midPrice = allLevels.reduce((s, l) => s + l.price, 0) / allLevels.length;
+          
+          // Разделяем на bids (ниже mid) и asks (выше mid)
+          existing.bids = allLevels
+            .filter(l => l.price < midPrice)
+            .sort((a, b) => b.price - a.price)
+            .slice(0, 100);
+          
+          existing.asks = allLevels
+            .filter(l => l.price >= midPrice)
+            .sort((a, b) => a.price - b.price)
+            .slice(0, 100);
+        }
         
         existing.timestamp = data.cts || data.timestamp || Date.now();
-        
-        // ✅ Лог: проверяем инверсию после мерджа
-        if (existing.bids.length > 0 && existing.asks.length > 0) {
-          const bestBid = existing.bids[0].price;
-          const bestAsk = existing.asks[0].price;
-          
-          if (bestBid >= bestAsk) {
-            logger.warn(
-              `[INVERTED_OB:SEND] ${symbol} ` +
-              `bid=${bestBid} ask=${bestAsk} ` +
-              `bidsLen=${existing.bids.length} asksLen=${existing.asks.length}`
-            );
-          }
-        }
         
         this.orderBooks.set(symbol, existing);
         
