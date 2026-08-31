@@ -224,4 +224,9 @@ export class Scanner {
   public getScannedTokens(): ScannedToken[] {
     return this.scannedTokens;
   }
+
+  // ✅ Добавленный метод для получения orderbook из WebSocket-кэша
+  public getOrderbookFromCache(symbol: string): OrderBook | null {
+    return this.orderbooks.get(symbol) || null;
+  }
 }
