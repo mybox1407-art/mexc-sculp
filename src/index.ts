@@ -16,7 +16,7 @@ async function main() {
     initializeCsvFiles();
 
     const scanner = new Scanner();
-    const executor = new PaperExecutor();  // ✅ Создаётся ОДИН раз
+    const executor = new PaperExecutor();
 
     await scanner.start();
     logger.info('Scanner started');
@@ -38,10 +38,20 @@ async function main() {
       logger.info(`📊 Open positions: ${openPositions.length}`);
       
       for (const position of openPositions) {
-        // Получаем свежий orderbook
+        // Получаем свежий orderbook через REST
         let orderbook = await scanner.getOrderbookFromApi(position.symbol);
-        
-        if (!orderbook) {
+
+        // ✅ Логируем проверку REST-стакана
+        logger.warn(
+          `[UPDATE_OB_CHECK] ${position.symbol} ` +
+          `restOb=${orderbook ? 'present' : 'null'} ` +
+          `bids=${orderbook?.bids?.length ?? 0} ` +
+          `asks=${orderbook?.asks?.length ?? 0}`
+        );
+
+        // Если REST вернул null или пустую сторону — fallback на кэш
+        if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
+          logger.warn(`[UPDATE_OB_FALLBACK] ${position.symbol} using cached orderbook`);
           orderbook = executor.getLastOrderbook(position.symbol);
         }
         
@@ -106,34 +116,53 @@ async function main() {
             logger.debug(`Cooldown active for ${signal.symbol}, skipping signal`);
             continue;
           }
-          
-          logSignal(signal, true);
-          
+
           // ✅ Используем свежий orderbook для исполнения
           let orderbook = await scanner.getOrderbookFromApi(signal.symbol);
-          if (!orderbook) {
+
+          // ✅ Логируем проверку REST-стакана перед исполнением
+          logger.warn(
+            `[EXEC_OB_CHECK] ${signal.symbol} ` +
+            `restOb=${orderbook ? 'present' : 'null'} ` +
+            `bids=${orderbook?.bids?.length ?? 0} ` +
+            `asks=${orderbook?.asks?.length ?? 0} ` +
+            `bid0=${JSON.stringify(orderbook?.bids?.[0] ?? null)} ` +
+            `ask0=${JSON.stringify(orderbook?.asks?.[0] ?? null)}`
+          );
+
+          // Если REST вернул null или пустую сторону — fallback на WebSocket
+          if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
+            logger.warn(`[EXEC_OB_FALLBACK] ${signal.symbol} using WebSocket fallback`);
             orderbook = token.orderbook;
           }
-          
+
           const order = executor.executeSignal(signal, orderbook);
 
-          if (order) {
-            logger.info(`Executed signal: ${signal.type} ${signal.symbol} ${signal.side}`);
-            
-            const positionValue = order.size * order.avgFillPrice;
-            
-            // ✅ Логирование перед отправкой в Telegram
-            logger.info(`📊 Before Telegram: Balance=${executor.getBalance().toFixed(2)}, Free=${executor.getFreeBalance().toFixed(2)}`);
-            
-            sendTradeOpenedAlert(
-              signal,
-              order.size,
-              positionValue,
-              executor.getBalance(),
-              executor.getFreeBalance(),
-              signal.type
-            );
+          // ✅ Логируем результат исполнения
+          logSignal(signal, order !== null);
+
+          if (!order) {
+            logger.debug(`Signal not executed: ${signal.type} ${signal.symbol} ${signal.side}`);
+            continue;
           }
+
+          logger.info(`Executed signal: ${signal.type} ${signal.symbol} ${signal.side}`);
+          
+          const positionValue = order.size * order.avgFillPrice;
+          
+          logger.info(
+            `📊 Before Telegram: Balance=${executor.getBalance().toFixed(2)}, ` +
+            `Free=${executor.getFreeBalance().toFixed(2)}`
+          );
+          
+          sendTradeOpenedAlert(
+            signal,
+            order.size,
+            positionValue,
+            executor.getBalance(),
+            executor.getFreeBalance(),
+            signal.type
+          );
         }
       }
 
