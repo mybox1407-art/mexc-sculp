@@ -40,6 +40,16 @@ async function main() {
         // ✅ Берём свежий WS-стакан из Scanner (обновляется WebSocket-хендлером)
         let orderbook = scanner.getOrderbookFromCache(position.symbol);
 
+        // ✅ Отладочный лог
+        const scannerOb = scanner.getOrderbookFromCache(position.symbol);
+        const executorOb = executor.getLastOrderbook(position.symbol);
+        logger.debug(
+          `[INDEX_OB_DEBUG] ${position.symbol} ` +
+          `scannerBid=${scannerOb?.bids[0]?.price ?? 'null'} scannerAsk=${scannerOb?.asks[0]?.price ?? 'null'} ` +
+          `executorBid=${executorOb?.bids[0]?.price ?? 'null'} executorAsk=${executorOb?.asks[0]?.price ?? 'null'} ` +
+          `usedBid=${orderbook?.bids[0]?.price ?? 'null'} usedAsk=${orderbook?.asks[0]?.price ?? 'null'}`
+        );
+
         // ✅ Fallback на кэш Executor если WS ещё не прислал
         if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
           orderbook = executor.getLastOrderbook(position.symbol);
