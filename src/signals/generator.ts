@@ -1,5 +1,5 @@
 import { Signal } from './types';
-import { calculateVWAP, calculateSupportResistance, calculateMidPrice } from './indicators';
+import { calculateVWAP, calculateMidPrice } from './indicators';
 import { OrderBook, Candle } from '../mexc/types';
 import { config } from '../config';
 import { logger } from '../utils/logger';
