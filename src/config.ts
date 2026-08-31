@@ -45,7 +45,7 @@ export interface Config {
 export const config: Config = {
   mexcApiKey: process.env.MEXC_API_KEY || '',
   mexcApiSecret: process.env.MEXC_API_SECRET || '',
-  mexcBaseUrl: process.env.MEXC_BASE_URL || 'https://contract.mexc.com',
+  mexcBaseUrl: process.env.MEXC_BASE_URL || 'https://api.mexc.com',
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
   logToCsv: process.env.LOG_TO_CSV !== 'false',
