@@ -33,6 +33,12 @@ export interface Config {
   minLiquidityDepth: number;
   minAvgVolume: number;
   excludedTokens: string[];
+  // ✅ Риск-менеджмент
+  dailyLossLimit: number;
+  maxDrawdownPct: number;
+  // ✅ TP/SL настройки (ATR-based)
+  tpAtrMultiple1: number;
+  tpAtrMultiple2: number;
 }
 
 export const config: Config = {
@@ -66,4 +72,10 @@ export const config: Config = {
   minLiquidityDepth: parseFloat(process.env.MIN_LIQUIDITY_DEPTH || '1500'),  // $50k
   minAvgVolume: parseFloat(process.env.MIN_AVG_VOLUME || '10000'),  // объём за 20 свечей
   excludedTokens: (process.env.EXCLUDED_TOKENS || 'HNT_USDT').split(','),
+  // ✅ Риск-менеджмент
+  dailyLossLimit: parseFloat(process.env.DAILY_LOSS_LIMIT || '10'),  // Макс. убыток в день (USDT)
+  maxDrawdownPct: parseFloat(process.env.MAX_DRAWDOWN_PCT || '20'),  // Макс. просадка (%)
+  // ✅ TP/SL настройки (ATR-based)
+  tpAtrMultiple1: parseFloat(process.env.TP_ATR_MULTIPLE_1 || '1.0'),  // TP1 = entry + ATR × 1.0
+  tpAtrMultiple2: parseFloat(process.env.TP_ATR_MULTIPLE_2 || '2.0'),  // TP2 = entry + ATR × 2.0
 };
