@@ -50,7 +50,7 @@ export const config: Config = {
   logToCsv: process.env.LOG_TO_CSV !== 'false',
   csvOutputPath: process.env.CSV_OUTPUT_PATH || './output',
   scanIntervalMs: parseInt(process.env.SCAN_INTERVAL_MS || '60000', 10),
-  positionUpdateIntervalMs: parseInt(process.env.POSITION_UPDATE_INTERVAL_MS || '2000'), // 2 секунды
+  positionUpdateIntervalMs: parseInt(process.env.POSITION_UPDATE_INTERVAL_MS || '2000'), // ✅ Добавлено
   minDepthUsd: parseFloat(process.env.MIN_DEPTH_USD || '2000'),
   maxSpreadPct: parseFloat(process.env.MAX_SPREAD_PCT || '0.5'),
   minAtr1m: parseFloat(process.env.MIN_ATR_1M || '0.001'),
