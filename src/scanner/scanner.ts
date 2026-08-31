@@ -60,7 +60,15 @@ export class Scanner {
   }
 
   private subscribeToSymbol(symbol: string): void {
+    logger.info(`[SUBSCRIBE] raw="${symbol}"`);
+    
     const orderBookHandler: OrderBookHandler = (orderbook) => {
+      logger.debug(
+        `[WS_HANDLER] key="${symbol}" ` +
+        `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
+        `bid0=${orderbook.bids[0]?.price} ask0=${orderbook.asks[0]?.price}`
+      );
+      
       this.orderbooks.set(symbol, orderbook);
       
       if (!this.orderbookHistory.has(symbol)) {
@@ -144,6 +152,8 @@ export class Scanner {
         continue;
       }
 
+      logger.debug(`[SCAN_CHECK] key="${symbol}" ob_exists=${this.orderbooks.has(symbol)}`);
+
       const orderbook = this.orderbooks.get(symbol);
       const trades = this.trades.get(symbol) || [];
       
@@ -225,8 +235,18 @@ export class Scanner {
     return this.scannedTokens;
   }
 
-  // ✅ Добавленный метод для получения orderbook из WebSocket-кэша
   public getOrderbookFromCache(symbol: string): OrderBook | null {
     return this.orderbooks.get(symbol) || null;
+  }
+
+  public async refreshOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
+    const orderbook = await this.getOrderbookFromApi(symbol);
+    
+    if (orderbook && orderbook.bids.length > 0 && orderbook.asks.length > 0) {
+      this.orderbooks.set(symbol, orderbook);
+      logger.info(`[SCANNER_OB_REFRESH] ${symbol}: bid=${orderbook.bids[0].price}, ask=${orderbook.asks[0].price}`);
+    }
+    
+    return orderbook;
   }
 }
