@@ -93,10 +93,6 @@ export class Scanner {
     const normalizedSymbol = symbol.toUpperCase();
 
     const orderBookHandler: OrderBookHandler = (orderbook) => {
-      /*
-       * Не мутируем объект, полученный из WS-клиента.
-       * Scanner хранит отдельный snapshot.
-       */
       const snapshot: OrderBook = {
         symbol: normalizedSymbol,
         bids: orderbook.bids.map((level) => ({ ...level })),
@@ -149,11 +145,18 @@ export class Scanner {
         return null;
       }
 
-      const data = await response.json();
-      const payload = data?.data ?? data;
+      const data = (await response.json()) as {
+        data?: {
+          bids?: unknown;
+          asks?: unknown;
+        };
+        bids?: unknown;
+        asks?: unknown;
+      };
 
-      const bidsRaw = payload?.bids;
-      const asksRaw = payload?.asks;
+      const payload = data.data ?? data;
+      const bidsRaw = payload.bids;
+      const asksRaw = payload.asks;
 
       if (!Array.isArray(bidsRaw) || !Array.isArray(asksRaw)) {
         logger.warn(`[REST_ORDERBOOK_INVALID] ${normalizedSymbol}`);
@@ -221,7 +224,6 @@ export class Scanner {
           continue;
         }
 
-        // Стакан старше 5 секунд не используем для генерации новых сигналов.
         if (Date.now() - orderbook.timestamp > 5_000) {
           continue;
         }
@@ -380,10 +382,6 @@ export class Scanner {
 
       const price = Number(row[0]);
 
-      /*
-       * Futures REST часто содержит [price, ..., size].
-       * На случай формата [price, size] используем второй элемент.
-       */
       const size = Number(row.length >= 3 ? row[2] : row[1]);
 
       if (
