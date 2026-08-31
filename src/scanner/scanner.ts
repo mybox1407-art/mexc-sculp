@@ -91,11 +91,15 @@ export class Scanner {
   /**
    * ✅ Polling orderbook через REST API для открытых позиций.
    *
+   * MEXC Futures API endpoint:
+   * https://contract.mexc.com/v2/api/depth?symbol={symbol}&limit={limit}
+   *
    * Возвращает null при HTTP-ошибке, пустом или невалидном ответе.
    */
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
     try {
-      const url = `${config.mexcBaseUrl}/api/v1/depth?symbol=${encodeURIComponent(symbol)}&limit=5`;
+      // ✅ Исправленный endpoint для MEXC Futures API v2
+      const url = `${config.mexcBaseUrl}/v2/api/depth?symbol=${encodeURIComponent(symbol)}&limit=5`;
 
       const response = await fetch(url);
       const rawText = await response.text();
