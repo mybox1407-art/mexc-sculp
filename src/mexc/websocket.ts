@@ -16,7 +16,7 @@ export class MexcWebSocket {
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
   private orderBooks: Map<string, OrderBook> = new Map();
   private subscribedSymbols: Set<string> = new Set();
-  private pingInterval: NodeJS.Timeout | null = null;  // ✅ Heartbeat интервал
+  private pingInterval: NodeJS.Timeout | null = null;
 
   constructor() {}
 
@@ -72,12 +72,21 @@ export class MexcWebSocket {
       logger.info('WebSocket connected');
       this.isConnecting = false;
       this.subscribeAll();
-      this.startPing();  // ✅ Запускаем heartbeat
+      this.startPing();
     });
 
     this.ws.on('message', (data: WebSocket.Data) => {
       try {
         const message = JSON.parse(data.toString());
+        
+        // ✅ Лог всех входящих сообщений
+        logger.debug(
+          `[WS_RAW] channel=${message.channel ?? 'n/a'} ` +
+          `symbol=${message.symbol ?? 'n/a'} ` +
+          `bids=${Array.isArray(message.data?.bids) ? message.data.bids.length : 0} ` +
+          `asks=${Array.isArray(message.data?.asks) ? message.data.asks.length : 0}`
+        );
+        
         this.handleMessage(message);
       } catch (error) {
         logger.error(`Error parsing WebSocket message: ${getErrorMessage(error)}`);
@@ -90,7 +99,7 @@ export class MexcWebSocket {
 
     this.ws.on('close', () => {
       logger.info('WebSocket closed, reconnecting...');
-      this.stopPing();  // ✅ Останавливаем heartbeat
+      this.stopPing();
       this.isConnecting = false;
       this.subscribedSymbols.clear();
       setTimeout(() => this.connect(), this.reconnectDelay);
@@ -102,9 +111,8 @@ export class MexcWebSocket {
   }
 
   private startPing(): void {
-    this.stopPing();  // ✅ На случай если уже запущен
+    this.stopPing();
     
-    // ✅ MEXC требует ping каждые 30 сек
     this.pingInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.ping();
@@ -251,7 +259,7 @@ export class MexcWebSocket {
   }
 
   public disconnect(): void {
-    this.stopPing();  // ✅ Останавливаем heartbeat
+    this.stopPing();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
