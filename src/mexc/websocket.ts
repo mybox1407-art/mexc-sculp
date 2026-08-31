@@ -15,8 +15,6 @@ export class MexcWebSocket {
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
   private orderBooks: Map<string, OrderBook> = new Map();
-  private lastVersions: Map<string, number> = new Map();
-  private invalidVersionCount: Map<string, number> = new Map();
 
   constructor() {}
 
@@ -25,7 +23,6 @@ export class MexcWebSocket {
     if (!this.orderBookHandlers.has(upperSymbol)) {
       this.orderBookHandlers.set(upperSymbol, []);
       this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'depth' });
-      this.invalidVersionCount.set(upperSymbol, 0);
     }
     this.orderBookHandlers.get(upperSymbol)!.push(handler);
 
@@ -94,10 +91,13 @@ export class MexcWebSocket {
 
       const version = Number(data.version ?? 0);
       this.orderBooks.set(symbol, orderbook);
-      this.lastVersions.set(symbol, version);
-      this.invalidVersionCount.set(symbol, 0);
 
-      logger.info(`[ORDERBOOK_INIT] ${symbol} version=${version} bids=${orderbook.bids.length} asks=${orderbook.asks.length}`);
+      logger.info(
+        `[ORDERBOOK_INIT] ${symbol} ` +
+        `version=${version} ` +
+        `bids=${orderbook.bids.length} ` +
+        `asks=${orderbook.asks.length}`
+      );
     } catch (err) {
       logger.error(`[ORDERBOOK_INIT_FAIL] ${symbol} ${getErrorMessage(err)}`);
     }
@@ -172,120 +172,88 @@ export class MexcWebSocket {
   private handleMessage(message: any): void {
     const channel = String(message.channel ?? '');
     const data = message.data;
-    const symbol = String(message.symbol ?? '');
+    const symbol = String(message.symbol ?? '').toUpperCase();
 
     if (channel === 'push.depth' && data && symbol) {
       this.handleDepthUpdate(symbol, data);
-    } else if (channel === 'push.deal' && data && symbol) {
+      return;
+    }
+
+    if (channel === 'push.deal' && data && symbol) {
       this.handleDealUpdate(symbol, data);
     }
   }
 
   private handleDepthUpdate(symbol: string, data: any): void {
-    const version = Number(data.version ?? 0);
-    const lastVersion = this.lastVersions.get(symbol);
+    const bids = this.parseLevels(data.bids);
+    const asks = this.parseLevels(data.asks);
 
-    const existing = this.orderBooks.get(symbol);
-    if (!existing) {
-      return;
-    }
-
-    if (lastVersion !== undefined && version <= lastVersion) {
-      return;
-    }
-
-    if (lastVersion !== undefined && version !== lastVersion + 1) {
-      const invalidCount = (this.invalidVersionCount.get(symbol) || 0) + 1;
-      this.invalidVersionCount.set(symbol, invalidCount);
-
+    if (bids.length === 0 || asks.length === 0) {
       logger.warn(
-        `[VERSION_GAP:WS] ${symbol} lastVersion=${lastVersion} newVersion=${version} gap=${version - lastVersion} cnt=${invalidCount}`
+        `[EMPTY_ORDERBOOK:WS] ${symbol} ` +
+        `bids=${bids.length} asks=${asks.length} ` +
+        `version=${data.version ?? 'n/a'}`
       );
-
-      if (invalidCount > 5) {
-        logger.warn(`[ORDERBOOK_RESYNC] ${symbol} – clearing local state due to version gaps`);
-        this.orderBooks.delete(symbol);
-        this.lastVersions.delete(symbol);
-        this.invalidVersionCount.set(symbol, 0);
-      }
       return;
     }
 
-    const bidsUpdate = (data.bids || []).map((b: any) => ({
-      price: parseFloat(b[0]),
-      size: parseFloat(b[1]),
-    }));
+    bids.sort((a, b) => b.price - a.price);
+    asks.sort((a, b) => a.price - b.price);
 
-    const asksUpdate = (data.asks || []).map((a: any) => ({
-      price: parseFloat(a[0]),
-      size: parseFloat(a[1]),
-    }));
+    const bestBid = bids[0];
+    const bestAsk = asks[0];
 
-    for (const bid of bidsUpdate) {
-      const idx = existing.bids.findIndex(b => b.price === bid.price);
-      if (idx >= 0) {
-        if (bid.size === 0) {
-          existing.bids.splice(idx, 1);
-        } else {
-          existing.bids[idx] = bid;
-        }
-      } else if (bid.size > 0) {
-        existing.bids.push(bid);
-      }
-    }
-
-    for (const ask of asksUpdate) {
-      const idx = existing.asks.findIndex(a => a.price === ask.price);
-      if (idx >= 0) {
-        if (ask.size === 0) {
-          existing.asks.splice(idx, 1);
-        } else {
-          existing.asks[idx] = ask;
-        }
-      } else if (ask.size > 0) {
-        existing.asks.push(ask);
-      }
-    }
-
-    existing.bids.sort((a, b) => b.price - a.price);
-    existing.asks.sort((a, b) => a.price - b.price);
-    existing.bids = existing.bids.slice(0, 100);
-    existing.asks = existing.asks.slice(0, 100);
-
-    existing.timestamp = data.cts || data.timestamp || Date.now();
-
-    if (
-      existing.bids.length === 0 ||
-      existing.asks.length === 0 ||
-      existing.bids[0].price >= existing.asks[0].price
-    ) {
+    if (bestBid.price >= bestAsk.price) {
       logger.warn(
         `[INVALID_ORDERBOOK:WS] ${symbol} ` +
-        `bids=${existing.bids.length} asks=${existing.asks.length} ` +
-        `bid0=${JSON.stringify(existing.bids[0] ?? null)} ` +
-        `ask0=${JSON.stringify(existing.asks[0] ?? null)} ` +
-        `version=${version}`
+        `bids=${bids.length} asks=${asks.length} ` +
+        `bid0=${JSON.stringify(bestBid)} ` +
+        `ask0=${JSON.stringify(bestAsk)} ` +
+        `version=${data.version ?? 'n/a'}`
       );
-
-      const invalidCount = (this.invalidVersionCount.get(symbol) || 0) + 1;
-      this.invalidVersionCount.set(symbol, invalidCount);
-
-      if (invalidCount > 3) {
-        logger.warn(`[ORDERBOOK_RESYNC:INVALID] ${symbol} – clearing local state`);
-        this.orderBooks.delete(symbol);
-        this.lastVersions.delete(symbol);
-        this.invalidVersionCount.set(symbol, 0);
-      }
       return;
     }
 
-    this.lastVersions.set(symbol, version);
-    this.invalidVersionCount.set(symbol, 0);
+    const orderbook: OrderBook = {
+      symbol,
+      bids: bids.slice(0, 100),
+      asks: asks.slice(0, 100),
+      timestamp: Number(data.cts ?? data.timestamp ?? Date.now()),
+    };
 
-    this.orderBooks.set(symbol, existing);
+    this.orderBooks.set(symbol, orderbook);
 
     const handlers = this.orderBookHandlers.get(symbol) || [];
-    handlers.forEach(h => h(existing));
+    handlers.forEach(handler => handler(orderbook));
+  }
+
+  private parseLevels(levels: unknown): Array<{ price: number; size: number }> {
+    if (!Array.isArray(levels)) {
+      return [];
+    }
+
+    const result: Array<{ price: number; size: number }> = [];
+
+    for (const level of levels) {
+      if (!Array.isArray(level) || level.length < 2) {
+        continue;
+      }
+
+      const price = Number(level[0]);
+      const size = Number(level[1]);
+
+      if (!Number.isFinite(price) || !Number.isFinite(size)) {
+        continue;
+      }
+
+      if (price <= 0 || size <= 0) {
+        continue;
+      }
+
+      result.push({ price, size });
+    }
+
+    return result;
   }
 
   private handleDealUpdate(symbol: string, data: any): void {
@@ -314,7 +282,5 @@ export class MexcWebSocket {
       this.isConnecting = false;
     }
     this.orderBooks.clear();
-    this.lastVersions.clear();
-    this.invalidVersionCount.clear();
   }
 }
