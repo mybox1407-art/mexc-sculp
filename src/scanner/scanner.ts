@@ -46,6 +46,10 @@ export class Scanner {
     this.tickers = new Map((await this.mexcApi.getTickers24h()).map(t => [t.symbol, t]));
     logger.info(`Loaded ${this.tickers.size} tickers`);
     
+    // Ждём подключения WS перед подписками
+    await this.mexcWs.connect();
+    logger.info('WebSocket connected');
+    
     const usdtSymbols = this.symbols.filter(s => 
       s.quoteAsset === 'USDT' && 
       s.status === '1'
