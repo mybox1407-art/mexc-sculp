@@ -17,7 +17,7 @@ export class MexcWebSocket {
   private orderBooks: Map<string, OrderBook> = new Map();
   private subscribedSymbols: Set<string> = new Set();
   private pingInterval: NodeJS.Timeout | null = null;
-  private lastVersion: Map<string, number> = new Map();  // ✅
+  private lastVersion: Map<string, number> = new Map();
 
   constructor() {}
 
@@ -174,13 +174,11 @@ export class MexcWebSocket {
       return;
     }
 
-    // ✅ Проверка version
     const lastVer = this.lastVersion.get(symbol);
     if (lastVer && version > 0) {
       if (version <= lastVer) {
         return;
       }
-      // ✅ Если большой gap — пропускаем, пусть REST обновит
       if (version > lastVer + 1000) {
         logger.warn(`[WS_GAP] ${symbol}: ${lastVer} → ${version}`);
         this.lastVersion.delete(symbol);
@@ -189,24 +187,19 @@ export class MexcWebSocket {
       }
     }
 
-    // ✅ Получаем кэш
     const cached = this.orderBooks.get(symbol);
 
-    // ✅ Если нет кэша и мало уровней — пропускаем (ждем полный)
     if (!cached && (bids.length < 20 || asks.length < 20)) {
       return;
     }
 
-    // ✅ Merge с кэшем
     let finalBids = bids;
     let finalAsks = asks;
 
     if (cached) {
-      // ✅ Создаём map для быстрого merge
       const bidMap = new Map<number, number>();
       const askMap = new Map<number, number>();
 
-      // Кэш в map
       for (const level of cached.bids) {
         bidMap.set(level.price, level.size);
       }
@@ -214,7 +207,6 @@ export class MexcWebSocket {
         askMap.set(level.price, level.size);
       }
 
-      // ✅ Применяем дельты (replace)
       for (const level of bids) {
         if (level.size === 0) {
           bidMap.delete(level.price);
@@ -230,7 +222,6 @@ export class MexcWebSocket {
         }
       }
 
-      // ✅ Back to array
       finalBids = Array.from(bidMap.entries())
         .map(([price, size]) => ({ price, size }))
         .sort((a, b) => b.price - a.price)
@@ -241,7 +232,6 @@ export class MexcWebSocket {
         .sort((a, b) => a.price - b.price)
         .slice(0, 100);
     } else {
-      // Нет кэша — сортируем как есть
       finalBids = bids.sort((a, b) => b.price - a.price).slice(0, 100);
       finalAsks = asks.sort((a, b) => a.price - b.price).slice(0, 100);
     }
@@ -334,10 +324,8 @@ export class MexcWebSocket {
     this.lastVersion.clear();
   }
 
-  public isStale(symbol: string, maxAgeMs: number = 10000): boolean {
+  public isStale(symbol: string): boolean {
     const ver = this.lastVersion.get(symbol);
-    if (ver === undefined) return true;
-    // Упрощённо — просто проверяем наличие
-    return false;
+    return ver === undefined;
   }
 }
