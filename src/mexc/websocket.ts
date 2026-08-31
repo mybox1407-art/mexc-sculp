@@ -25,12 +25,10 @@ export class MexcWebSocket {
     if (!this.orderBookHandlers.has(upperSymbol)) {
       this.orderBookHandlers.set(upperSymbol, []);
       this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'depth' });
-      // Инициализируем счётчики
       this.invalidVersionCount.set(upperSymbol, 0);
     }
     this.orderBookHandlers.get(upperSymbol)!.push(handler);
 
-    // Если стакан ещё не инициализирован — загружаем снапшот
     if (!this.orderBooks.has(upperSymbol)) {
       await this.initOrderBook(upperSymbol);
     }
@@ -64,7 +62,21 @@ export class MexcWebSocket {
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
-      const json = await res.json();
+
+      const json = await res.json() as {
+        data?: {
+          bids?: any[][];
+          asks?: any[][];
+          version?: number;
+          cts?: number;
+          timestamp?: number;
+        };
+        bids?: any[][];
+        asks?: any[][];
+        version?: number;
+        cts?: number;
+        timestamp?: number;
+      };
       const data = json.data || json;
 
       const orderbook: OrderBook = {
@@ -88,7 +100,6 @@ export class MexcWebSocket {
       logger.info(`[ORDERBOOK_INIT] ${symbol} version=${version} bids=${orderbook.bids.length} asks=${orderbook.asks.length}`);
     } catch (err) {
       logger.error(`[ORDERBOOK_INIT_FAIL] ${symbol} ${getErrorMessage(err)}`);
-      // Не выбрасываем, чтобы не ломать подписку; просто не будет стакана до первого успешного снапшота
     }
   }
 
@@ -174,18 +185,15 @@ export class MexcWebSocket {
     const version = Number(data.version ?? 0);
     const lastVersion = this.lastVersions.get(symbol);
 
-    // Если стакана ещё нет — игнорируем, пока не будет инициализирован через REST
     const existing = this.orderBooks.get(symbol);
     if (!existing) {
       return;
     }
 
-    // Пропускаем старые версии
     if (lastVersion !== undefined && version <= lastVersion) {
       return;
     }
 
-    // Проверка непрерывности версии
     if (lastVersion !== undefined && version !== lastVersion + 1) {
       const invalidCount = (this.invalidVersionCount.get(symbol) || 0) + 1;
       this.invalidVersionCount.set(symbol, invalidCount);
@@ -194,18 +202,15 @@ export class MexcWebSocket {
         `[VERSION_GAP:WS] ${symbol} lastVersion=${lastVersion} newVersion=${version} gap=${version - lastVersion} cnt=${invalidCount}`
       );
 
-      // При серьёзном разрыве — сброс и повторная инициализация
       if (invalidCount > 5) {
         logger.warn(`[ORDERBOOK_RESYNC] ${symbol} – clearing local state due to version gaps`);
         this.orderBooks.delete(symbol);
         this.lastVersions.delete(symbol);
         this.invalidVersionCount.set(symbol, 0);
-        // Можно здесь вызвать this.initOrderBook(symbol) и/или переподписку
       }
       return;
     }
 
-    // Применяем обновление
     const bidsUpdate = (data.bids || []).map((b: any) => ({
       price: parseFloat(b[0]),
       size: parseFloat(b[1]),
@@ -249,7 +254,6 @@ export class MexcWebSocket {
 
     existing.timestamp = data.cts || data.timestamp || Date.now();
 
-    // Проверка на «перевёрнутый» стакан
     if (
       existing.bids.length === 0 ||
       existing.asks.length === 0 ||
@@ -263,7 +267,6 @@ export class MexcWebSocket {
         `version=${version}`
       );
 
-      // Сброс при повторных ошибках
       const invalidCount = (this.invalidVersionCount.get(symbol) || 0) + 1;
       this.invalidVersionCount.set(symbol, invalidCount);
 
@@ -273,10 +276,9 @@ export class MexcWebSocket {
         this.lastVersions.delete(symbol);
         this.invalidVersionCount.set(symbol, 0);
       }
-      return; // не отдаём сломанный стакан хендлерам
+      return;
     }
 
-    // Всё ок — обновляем версию и счётчик ошибок
     this.lastVersions.set(symbol, version);
     this.invalidVersionCount.set(symbol, 0);
 
