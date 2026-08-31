@@ -197,38 +197,25 @@ export class MexcWebSocket {
     let finalAsks = asks;
 
     if (cached) {
-      const bidMap = new Map<number, number>();
-      const askMap = new Map<number, number>();
+      const newBids = [...bids];
+      const newAsks = [...asks];
 
       for (const level of cached.bids) {
-        bidMap.set(level.price, level.size);
+        if (!newBids.find(b => b.price === level.price)) {
+          newBids.push(level);
+        }
       }
       for (const level of cached.asks) {
-        askMap.set(level.price, level.size);
-      }
-
-      for (const level of bids) {
-        if (level.size === 0) {
-          bidMap.delete(level.price);
-        } else {
-          bidMap.set(level.price, level.size);
-        }
-      }
-      for (const level of asks) {
-        if (level.size === 0) {
-          askMap.delete(level.price);
-        } else {
-          askMap.set(level.price, level.size);
+        if (!newAsks.find(a => a.price === level.price)) {
+          newAsks.push(level);
         }
       }
 
-      finalBids = Array.from(bidMap.entries())
-        .map(([price, size]) => ({ price, size }))
+      finalBids = newBids
         .sort((a, b) => b.price - a.price)
         .slice(0, 100);
 
-      finalAsks = Array.from(askMap.entries())
-        .map(([price, size]) => ({ price, size }))
+      finalAsks = newAsks
         .sort((a, b) => a.price - b.price)
         .slice(0, 100);
     } else {
@@ -244,7 +231,6 @@ export class MexcWebSocket {
     const bestAsk = finalAsks[0];
 
     if (bestBid.price >= bestAsk.price) {
-      logger.debug(`[CROSSED] ${symbol}: ${bestBid.price} >= ${bestAsk.price}`);
       return;
     }
 
