@@ -10,11 +10,9 @@ export class MexcWebSocket {
   private ws: WebSocket | null = null;
   private orderBookHandlers: Map<string, OrderBookHandler[]> = new Map();
   private tradeHandlers: Map<string, TradeHandler[]> = new Map();
-  private reconnectDelay: number = 5000;
   private baseUrl: string = 'wss://contract.mexc.com/edge';
   private isConnecting: boolean = false;
   private orderBooks: Map<string, OrderBook> = new Map();
-  private subscribedSymbols: Set<string> = new Set();
   private pingInterval: NodeJS.Timeout | null = null;
   private lastVersion: Map<string, number> = new Map();
 
