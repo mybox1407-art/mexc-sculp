@@ -241,14 +241,6 @@ export class MexcWebSocket {
       return;
     }
 
-    // Логируем сырые top-of-book от MEXC
-    logger.debug(
-      `[WS_DEPTH_RAW] ${symbol} ` +
-      `bids=${bids.length} asks=${asks.length} version=${version} ` +
-      `rawBid0=${JSON.stringify(data.bids?.[0] ?? null)} ` +
-      `rawAsk0=${JSON.stringify(data.asks?.[0] ?? null)}`
-    );
-
     // Проверяем, есть ли подписка на этот символ
     const depthKey = `${symbol}_depth`;
     if (!this.desiredSubscriptions.has(depthKey)) {
@@ -258,11 +250,6 @@ export class MexcWebSocket {
 
     const finalBids = bids.slice(0, 100);
     const finalAsks = asks.slice(0, 100);
-
-    logger.debug(
-      `[WS_DEPTH_FINAL] ${symbol} ` +
-      `bid0=${finalBids[0].price} ask0=${finalAsks[0].price}`
-    );
 
     const orderbook: OrderBook = {
       symbol,
