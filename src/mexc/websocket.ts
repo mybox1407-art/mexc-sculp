@@ -16,7 +16,6 @@ export class MexcWebSocket {
   private pingInterval: NodeJS.Timeout | null = null;
   private lastVersion: Map<string, number> = new Map();
 
-  // Новая логика подписок
   private desiredSubscriptions = new Set<string>();
   private activeSubscriptions = new Set<string>();
   private reconnectAttempt = 0;
@@ -94,7 +93,6 @@ export class MexcWebSocket {
     this.isConnecting = false;
     this.activeSubscriptions.clear();
     this.lastVersion.clear();
-    // desiredSubscriptions НЕ чистим
 
     if (this.reconnectTimer) {
       return;
@@ -238,69 +236,32 @@ export class MexcWebSocket {
     const asks = this.parseLevels(data.asks);
     const version = Number(data.version ?? 0);
 
+    // Логируем сырые top-of-book от MEXC
+    logger.debug(
+      `[WS_DEPTH_RAW] ${symbol} ` +
+      `bids=${bids.length} asks=${asks.length} version=${version} ` +
+      `rawBid0=${JSON.stringify(data.bids?.[0] ?? null)} ` +
+      `rawAsk0=${JSON.stringify(data.asks?.[0] ?? null)}`
+    );
+
     if (bids.length === 0 && asks.length === 0) {
+      logger.warn(`[WS_DEPTH_EMPTY] ${symbol}: no levels`);
       return;
     }
 
-    const lastVer = this.lastVersion.get(symbol);
-    if (lastVer && version > 0) {
-      if (version <= lastVer) {
-        return;
-      }
-      if (version > lastVer + 1000) {
-        logger.warn(`[WS_GAP] ${symbol}: ${lastVer} → ${version}`);
-        this.lastVersion.delete(symbol);
-        this.orderBooks.delete(symbol);
-        return;
-      }
-    }
-
-    const cached = this.orderBooks.get(symbol);
-
-    if (!cached && (bids.length < 20 || asks.length < 20)) {
+    if (bids.length === 0 || asks.length === 0) {
+      logger.warn(`[WS_DEPTH_PARTIAL] ${symbol}: bids=${bids.length} asks=${asks.length}`);
       return;
     }
 
-    let finalBids = bids;
-    let finalAsks = asks;
+    // Упрощённая логика: без кэша и version-checks для теста
+    const finalBids = bids.slice(0, 100);
+    const finalAsks = asks.slice(0, 100);
 
-    if (cached) {
-      const newBids = [...bids];
-      const newAsks = [...asks];
-
-      for (const level of cached.bids) {
-        if (!newBids.find(b => b.price === level.price)) {
-          newBids.push(level);
-        }
-      }
-      for (const level of cached.asks) {
-        if (!newAsks.find(a => a.price === level.price)) {
-          newAsks.push(level);
-        }
-      }
-
-      finalBids = newBids
-        .sort((a, b) => b.price - a.price)
-        .slice(0, 100);
-
-      finalAsks = newAsks
-        .sort((a, b) => a.price - b.price)
-        .slice(0, 100);
-    } else {
-      finalBids = bids.sort((a, b) => b.price - a.price).slice(0, 100);
-      finalAsks = asks.sort((a, b) => a.price - b.price).slice(0, 100);
-    }
-
-    if (finalBids.length === 0 || finalAsks.length === 0) {
-      return;
-    }
-
-    const bestBid = finalBids[0];
-    const bestAsk = finalAsks[0];
-
-    if (bestBid.price >= bestAsk.price) {
-      return;
-    }
+    logger.debug(
+      `[WS_DEPTH_FINAL] ${symbol} ` +
+      `bid0=${finalBids[0].price} ask0=${finalAsks[0].price}`
+    );
 
     const orderbook: OrderBook = {
       symbol,
