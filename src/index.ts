@@ -24,17 +24,16 @@ async function main() {
     let lastReportTime = Date.now();
     const reportInterval = 24 * 60 * 60 * 1000;
 
-    // ✅ Основной цикл (сканирование + исполнение + обновление позиций)
-    while (true) {
-      const scanTime = Date.now();
-      const scannedTokens = scanner.getScannedTokens();
-      logger.info(`Scanned tokens: ${scannedTokens.length}`);
-      executor.incrementScans();
-
-      logScan(scannedTokens, scanTime);
-
-      // ✅ 1. Сначала обновляем позиции (закрываем по SL/TP/TIME)
+    // ✅ Отдельный цикл обновления позиций (раз в 2 секунды)
+    const positionUpdateInterval = config.positionUpdateIntervalMs || 2000;
+    
+    setInterval(async () => {
       const openPositions = executor.getPositions();
+      
+      if (openPositions.length === 0) {
+        return;
+      }
+
       logger.info(`📊 Open positions: ${openPositions.length}`);
       
       for (const position of openPositions) {
@@ -97,13 +96,23 @@ async function main() {
           `SL: ${slDist}% | TP: ${tpDist}%`
         );
       }
+    }, positionUpdateInterval);
 
-      // ✅ 3. Кэшируем orderbook для всех токенов
+    // ✅ Основной цикл (сканирование + исполнение сигналов)
+    while (true) {
+      const scanTime = Date.now();
+      const scannedTokens = scanner.getScannedTokens();
+      logger.info(`Scanned tokens: ${scannedTokens.length}`);
+      executor.incrementScans();
+
+      logScan(scannedTokens, scanTime);
+
+      // ✅ 1. Кэшируем orderbook для всех токенов
       for (const token of scannedTokens) {
         executor.cacheOrderbook(token.symbol, token.orderbook);
       }
 
-      // ✅ 4. Генерируем и исполняем сигналы
+      // ✅ 2. Генерируем и исполняем сигналы
       for (const token of scannedTokens) {
         const signals = generateSignals(token.candles, token.orderbook, token.atr);
 
@@ -167,7 +176,7 @@ async function main() {
         }
       }
 
-      // ✅ 5. Daily report
+      // ✅ 3. Daily report
       if (Date.now() - lastReportTime >= reportInterval) {
         const stats = calculateStats(executor.getTradeResults());
         const activityStats = executor.getActivityStats();
