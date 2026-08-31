@@ -179,6 +179,10 @@ export class MexcWebSocket {
         existing.bids = existing.bids.slice(0, 100);
         existing.asks = existing.asks.slice(0, 100);
         
+        // ✅ Фильтрация уровней с size === 0 после сортировки и slice
+        existing.bids = existing.bids.filter(l => l.size > 0);
+        existing.asks = existing.asks.filter(l => l.size > 0);
+        
         existing.timestamp = data.cts || data.timestamp || Date.now();
 
         // ✅ Один защитный лог
