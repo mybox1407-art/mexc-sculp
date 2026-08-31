@@ -16,29 +16,19 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
   const currentPrice = calculateMidPrice(orderbook.bids[0].price, orderbook.asks[0].price);
   const deviation = Math.abs(currentPrice - vwap) / vwap;
 
-  // ✅ Вход: ×1.5 ATR (расслаблено с ×2)
+  // ✅ Вход: ×1.5 ATR
   if (deviation > atr * config.atrMultiple * 1.5 / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     
-    // ✅ MFE фильтр: проверка distance до support/resistance
-    const { resistance, support } = calculateSupportResistance(candles, 20);
-    const distanceToResistance = (resistance - currentPrice) / currentPrice;
-    const distanceToSupport = (currentPrice - support) / currentPrice;
-    
-    // ✅ ИСПРАВЛЕНО: проверяем distance до ПРОТИВОПОЛОЖНОГО уровня относительно цели
-    const targetDistance = Math.abs(vwap - currentPrice) / currentPrice;  // Расстояние до VWAP (цель)
-    
-    if (side === 'BUY' && distanceToResistance < targetDistance * 0.3) {
-      // Если до resistance меньше 30% от пути до цели — пропускаем
-      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to resistance (${(distanceToResistance * 100).toFixed(2)}%), need ${(targetDistance * 0.3 * 100).toFixed(2)}%`);
-      return null;
-    }
-    if (side === 'SELL' && distanceToSupport < targetDistance * 0.3) {
-      logger.debug(`MFE filter: ${candles[0]?.symbol} too close to support (${(distanceToSupport * 100).toFixed(2)}%), need ${(targetDistance * 0.3 * 100).toFixed(2)}%`);
-      return null;
-    }
+    // ✅ MFE фильтр ОТКЛЮЧЁН — блокировал все сигналы
+    // const { resistance, support } = calculateSupportResistance(candles, 20);
+    // const distanceToResistance = (resistance - currentPrice) / currentPrice;
+    // const distanceToSupport = (currentPrice - support) / currentPrice;
+    // const targetDistance = Math.abs(vwap - currentPrice) / currentPrice;
+    // if (side === 'BUY' && distanceToResistance < targetDistance * 0.3) { return null; }
+    // if (side === 'SELL' && distanceToSupport < targetDistance * 0.3) { return null; }
 
-    // ✅ ИСПРАВЛЕНО: TP = entry ± ATR × tpAtrMultiple, а не VWAP
+    // ✅ TP = entry ± ATR × tpAtrMultiple
     const tpDistance = atr * config.tpAtrMultiple1;
     const target = side === 'BUY'
       ? currentPrice + tpDistance
@@ -48,6 +38,8 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
     const stop = side === 'BUY' 
       ? currentPrice - atr * config.slAtrMultiple
       : currentPrice + atr * config.slAtrMultiple;
+
+    logger.debug(`Signal: ${candles[0]?.symbol} ${side} entry=${currentPrice.toFixed(4)} target=${target.toFixed(4)} stop=${stop.toFixed(4)} dev=${(deviation * 100).toFixed(2)}%`);
 
     return {
       type: 'VWAP_MEAN_REVERSION',
