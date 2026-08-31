@@ -236,6 +236,11 @@ export class MexcWebSocket {
     const asks = this.parseLevels(data.asks);
     const version = Number(data.version ?? 0);
 
+    // Игнорируем partial стаканы
+    if (bids.length === 0 || asks.length === 0) {
+      return;
+    }
+
     // Логируем сырые top-of-book от MEXC
     logger.debug(
       `[WS_DEPTH_RAW] ${symbol} ` +
@@ -244,17 +249,13 @@ export class MexcWebSocket {
       `rawAsk0=${JSON.stringify(data.asks?.[0] ?? null)}`
     );
 
-    if (bids.length === 0 && asks.length === 0) {
-      logger.warn(`[WS_DEPTH_EMPTY] ${symbol}: no levels`);
+    // Проверяем, есть ли подписка на этот символ
+    const depthKey = `${symbol}_depth`;
+    if (!this.desiredSubscriptions.has(depthKey)) {
+      // Символ не подписан — игнорируем
       return;
     }
 
-    if (bids.length === 0 || asks.length === 0) {
-      logger.warn(`[WS_DEPTH_PARTIAL] ${symbol}: bids=${bids.length} asks=${asks.length}`);
-      return;
-    }
-
-    // Упрощённая логика: без кэша и version-checks для теста
     const finalBids = bids.slice(0, 100);
     const finalAsks = asks.slice(0, 100);
 
