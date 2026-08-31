@@ -1,7 +1,6 @@
 import { PaperOrder, PaperPosition, TradeResult } from './types';
 import { Signal } from '../signals/types';
 import { OrderBook } from '../mexc/types';
-import { config } from '../config';
 import { logger } from '../utils/logger';
 
 // Комиссии MEXC Futures
@@ -142,18 +141,9 @@ export function shouldExitPosition(position: PaperPosition, signal: Signal): boo
     return false;
   }
 
-  const pnlPct =
-    ((position.currentPrice - position.entryPrice) / position.entryPrice) *
-    100 *
-    (position.side === 'BUY' ? 1 : -1);
-
   /*
-   * TP1 и TP2 теперь обрабатываются в PaperExecutor через ATR-price targets:
-   * targetPrice1 / targetPrice2.
-   *
-   * Поэтому здесь оставляем только Stop Loss. Иначе позиция будет
-   * преждевременно закрыта по tpPct1/tpPct2, которые имеют другой смысл
-   * и не являются процентами PnL.
+   * Оставляем только проверку Stop Loss.
+   * TP1/TP2 обрабатываются в PaperExecutor через ATR-price targets.
    */
   if (position.side === 'BUY') {
     return position.currentPrice <= signal.stop;
@@ -179,12 +169,6 @@ export function calculateTradeResult(position: PaperPosition, exitPrice: number)
     position.entryPrice * position.size * TAKER_FEE +
     exitPrice * position.size * TAKER_FEE;
 
-  /*
-   * В этой paper-модели exitPrice уже является фактической ценой best bid/ask.
-   * Разницу от position.currentPrice нельзя повторно называть и вычитать как
-   * slippage: currentPrice обычно получен из того же bid/ask, а при устаревшем
-   * стакане она будет искусственно искажать результат.
-   */
   const slippage = 0;
   const pnl = grossPnl - commission - slippage;
   const pnlPct = (pnl / (position.entryPrice * position.size)) * 100;
