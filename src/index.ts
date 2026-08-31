@@ -40,6 +40,12 @@ async function main() {
         // ✅ Берём свежий WS-стакан из Scanner (обновляется WebSocket-хендлером)
         let orderbook = scanner.getOrderbookFromCache(position.symbol);
 
+        logger.debug(
+          `[INDEX_CACHE_CHECK] ${position.symbol} ` +
+          `scannerCacheBid=${scanner.getOrderbookFromCache(position.symbol)?.bids[0]?.price} ` +
+          `orderbookBid=${orderbook?.bids[0]?.price}`
+        );
+
         // ✅ Отладочный лог
         const scannerOb = scanner.getOrderbookFromCache(position.symbol);
         const executorOb = executor.getLastOrderbook(position.symbol);
