@@ -22,7 +22,11 @@ function isValidOrderbook(
     asks: Array<{ price: number }>;
     timestamp: number;
   } | null
-): boolean {
+): orderbook is {
+  bids: Array<{ price: number }>;
+  asks: Array<{ price: number }>;
+  timestamp: number;
+} {
   if (
     !orderbook ||
     orderbook.bids.length === 0 ||
@@ -101,13 +105,6 @@ async function main(): Promise<void> {
 
     let positionUpdateInProgress = false;
 
-    /*
-     * Открытые позиции обновляются только текущим стаканом Scanner.
-     * Scanner получает его напрямую из WebSocket.
-     *
-     * Кэш executor — не источник цены; он не должен перезаписывать
-     * свежий WS snapshot старыми token.orderbook из scan().
-     */
     setInterval(() => {
       void (async () => {
         if (positionUpdateInProgress) {
@@ -126,10 +123,6 @@ async function main(): Promise<void> {
           for (const position of openPositions) {
             let orderbook = scanner.getOrderbookFromCache(position.symbol);
 
-            /*
-             * Если WS-кэш отсутствует, битый или устарел — берём REST snapshot.
-             * Этот REST snapshot используется только для текущего обновления позиции.
-             */
             if (!isValidOrderbook(orderbook) || !isFreshOrderbook(orderbook)) {
               orderbook = await scanner.getOrderbookFromApi(position.symbol);
             }
@@ -209,13 +202,6 @@ async function main(): Promise<void> {
 
       logScan(scannedTokens, scanTime);
 
-      /*
-       * ВАЖНО:
-       * Не делаем executor.cacheOrderbook(token.symbol, token.orderbook)
-       * для всех scannedTokens. Это старые снимки, сформированные во время
-       * предыдущего scan(), и они могут перезаписывать свежий WS-стакан.
-       */
-
       for (const token of scannedTokens) {
         if (!isValidOrderbook(token.orderbook)) {
           continue;
@@ -242,10 +228,6 @@ async function main(): Promise<void> {
             continue;
           }
 
-          /*
-           * Перед открытием используем REST snapshot: это отдельная проверка
-           * текущей цены исполнения. Если REST временно не работает — свежий WS.
-           */
           let orderbook = await scanner.getOrderbookFromApi(signal.symbol);
 
           if (!isValidOrderbook(orderbook)) {
