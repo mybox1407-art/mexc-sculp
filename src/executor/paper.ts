@@ -33,6 +33,9 @@ export class PaperExecutor {
   private positionSnapshots: Map<string, PaperPosition[]> = new Map();
   private orderBooks: Map<string, OrderBook> = new Map();
   private cooldowns: Map<string, CooldownInfo> = new Map();
+  private positionLocks: Map<string, number> = new Map();  // ✅ Блокировка повторного открытия
+  private dailyLoss: number = 0;  // ✅ Убыток за сегодня
+  private lastResetDate: string = new Date().toDateString();  // ✅ Сброс dailyLoss каждый день
 
   public cacheOrderbook(symbol: string, orderbook: OrderBook): void {
     this.orderBooks.set(symbol, orderbook);
@@ -58,20 +61,56 @@ export class PaperExecutor {
     return this.positions.has(symbol);
   }
 
+  // ✅ Проверка daily loss limit
+  public shouldStopTrading(): boolean {
+    // Сброс dailyLoss каждый день
+    const today = new Date().toDateString();
+    if (today !== this.lastResetDate) {
+      this.dailyLoss = 0;
+      this.lastResetDate = today;
+      logger.info(`Daily loss reset to 0 (new day: ${today})`);
+    }
+
+    // Проверка лимита
+    if (config.dailyLossLimit && this.dailyLoss >= config.dailyLossLimit) {
+      logger.warn(`Daily loss limit reached: ${this.dailyLoss.toFixed(2)} >= ${config.dailyLossLimit}`);
+      return true;
+    }
+
+    return false;
+  }
+
   public executeSignal(signal: Signal, orderbook: OrderBook): PaperOrder | null {
+    // ✅ Проверка 1: позиция уже открыта
     if (this.hasOpenPosition(signal.symbol)) {
-      logger.debug(`Position already open for ${signal.symbol}, skipping`);
+      logger.debug(`❌ Position already open for ${signal.symbol}, skipping`);
       return null;
     }
 
+    // ✅ Проверка 2: cooldown активен
     if (this.isOnCooldown(signal.symbol)) {
       const cooldown = this.cooldowns.get(signal.symbol)!;
       const remaining = Math.round((cooldown.until - Date.now()) / 1000);
-      logger.debug(`Cooldown for ${signal.symbol}: ${remaining}s remaining (reason: ${cooldown.reason})`);
+      logger.debug(`⏱ Cooldown for ${signal.symbol}: ${remaining}s remaining (reason: ${cooldown.reason})`);
       return null;
     }
 
-    const positionValue = this.balance * (config.positionSizePct / 100);
+    // ✅ Проверка 3: позиция только что закрыта (защита от дублирования в том же цикле)
+    const lastCloseTime = this.positionLocks.get(signal.symbol);
+    if (lastCloseTime && Date.now() - lastCloseTime < 5000) {
+      logger.debug(`🔒 Position for ${signal.symbol} just closed (${Date.now() - lastCloseTime}ms ago), skipping`);
+      return null;
+    }
+
+    // ✅ Проверка 4: daily loss limit
+    if (this.shouldStopTrading()) {
+      logger.warn(`⛔ Trading stopped due to daily loss limit`);
+      return null;
+    }
+
+    // ✅ ИСПРАВЛЕНО: используем FREE баланс, а не общий
+    const freeBalance = this.getFreeBalance();
+    const positionValue = freeBalance * (config.positionSizePct / 100);
     const size = positionValue / signal.entry;
 
     if (size <= 0) {
@@ -84,9 +123,8 @@ export class PaperExecutor {
       return null;
     }
 
-    const freeBalance = this.balance - this.reservedBalance;
     if (positionValue > freeBalance) {
-      logger.warn(`Insufficient balance for ${signal.symbol}: need ${positionValue}$, have ${freeBalance}$`);
+      logger.warn(`Insufficient balance for ${signal.symbol}: need ${positionValue.toFixed(2)}$, have ${freeBalance.toFixed(2)}$`);
       return null;
     }
 
@@ -101,8 +139,10 @@ export class PaperExecutor {
     this.orders.push(filledOrder);
     this.totalSignals++;
     this.totalExecutions++;
+    
+    // ✅ Резервируем средства
     this.reservedBalance += positionValue;
-
+    
     const position: PaperPosition = {
       symbol: signal.symbol,
       side: signal.side,
@@ -127,8 +167,10 @@ export class PaperExecutor {
     });
 
     this.positionSnapshots.set(signal.symbol, [position]);
+    this.positionLocks.delete(signal.symbol);  // ✅ Снимаем блокировку
 
-    logger.info(`Opened position: ${signal.side} ${size} ${signal.symbol} at ${filledOrder.avgFillPrice}`);
+    const newFreeBalance = this.getFreeBalance();
+    logger.info(`✅ Opened: ${signal.side} ${size.toFixed(4)} ${signal.symbol} at ${filledOrder.avgFillPrice.toFixed(4)} | Balance: ${this.balance.toFixed(2)}$, Reserved: ${this.reservedBalance.toFixed(2)}$, Free: ${newFreeBalance.toFixed(2)}$`);
 
     return filledOrder;
   }
@@ -141,7 +183,6 @@ export class PaperExecutor {
 
     const position = tracking.position;
     
-    // ✅ Добавлено логирование orderbook
     logger.debug(`[${symbol}] OB: bid=${orderbook.bids[0].price}, ask=${orderbook.asks[0].price}, ts=${Date.now()}`);
     
     const currentPrice = position.side === 'BUY' ? orderbook.bids[0].price : orderbook.asks[0].price;
@@ -163,7 +204,7 @@ export class PaperExecutor {
 
     logPosition(position);
 
-    // ✅ Time-based exit: закрываем через N минут, если цена не пошла в пользу
+    // === 1. Time-based exit ===
     const maxHoldMinutes = config.maxHoldMinutes || 10;
     const holdMinutes = (Date.now() - position.openTimestamp) / 1000 / 60;
 
@@ -172,41 +213,23 @@ export class PaperExecutor {
       const exitPrice = calculateExitPrice(position, orderbook);
       const result = calculateTradeResult(position, exitPrice);
       
-      this.tradeResults.push(result);
-      this.positions.delete(symbol);
-      this.positionSnapshots.delete(symbol);
-      this.balance += result.pnl;
-      this.reservedBalance -= position.entryPrice * position.size;
-
-      // ✅ Cooldown после любой сделки (15 минут)
-      this.cooldowns.set(symbol, {
-        until: Date.now() + 15 * 60 * 1000,
-        reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
-      });
-      logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
-
-      const avgHoldTime = this.tradeResults.length > 0
-        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
-        : holdMinutes;
-
-      logTrade(result, 'TIME_EXIT', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
-      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TIME_EXIT`);
-
+      this._closePosition(symbol, result, tracking, 'TIME_EXIT');
       return result;
     }
 
-    // ✅ Трейлинг-стоп после TP1 (уменьшена дистанция: 0.2 ATR)
-    const targetPnl1 = position.size * position.signal.atr * config.tpPct1;
-    if (position.unrealizedPnl >= targetPnl1 && !tracking.trailingActive) {
+    // === 2. Trailing stop после TP1 ===
+    const targetPrice1 = position.side === 'BUY'
+      ? position.entryPrice + position.signal.atr * config.tpAtrMultiple1
+      : position.entryPrice - position.signal.atr * config.tpAtrMultiple1;
+
+    if (!tracking.trailingActive && this._hitTargetPrice(position, targetPrice1)) {
       tracking.trailingActive = true;
-      // ✅ Увеличено: 0.2 ATR вместо 0.15
       tracking.trailingStop = position.side === 'BUY'
         ? position.entryPrice + position.signal.atr * 0.2
         : position.entryPrice - position.signal.atr * 0.2;
       logger.info(`Trailing stop activated for ${symbol}: ${tracking.trailingStop.toFixed(4)} (0.2 ATR)`);
     }
 
-    // Проверка трейлинг-стопа
     if (tracking.trailingActive && tracking.trailingStop) {
       const hitTrailingStop = position.side === 'BUY'
         ? currentPrice <= tracking.trailingStop
@@ -217,48 +240,26 @@ export class PaperExecutor {
         const exitPrice = calculateExitPrice(position, orderbook);
         const result = calculateTradeResult(position, exitPrice);
         
-        this.tradeResults.push(result);
-        this.positions.delete(symbol);
-        this.positionSnapshots.delete(symbol);
-        this.balance += result.pnl;
-        this.reservedBalance -= position.entryPrice * position.size;
-
-        // ✅ Cooldown после любой сделки (15 минут)
-        this.cooldowns.set(symbol, {
-          until: Date.now() + 15 * 60 * 1000,
-          reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
-        });
-        logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
-
-        const avgHoldTime = this.tradeResults.length > 0
-          ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
-          : (Date.now() - position.openTimestamp) / 1000 / 60;
-
-        logTrade(result, 'TRAILING', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
-        logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TRAILING`);
-
+        this._closePosition(symbol, result, tracking, 'TRAILING');
         return result;
       }
     }
 
-    // ✅ Частичная фиксация на TP1 (50% позиции)
-    const targetPnl1Full = position.size * position.signal.atr * config.tpPct1;
-
-    if (!tracking.partialExitDone && position.unrealizedPnl >= targetPnl1Full) {
+    // === 3. Частичный выход на TP1 ===
+    if (!tracking.partialExitDone && this._hitTargetPrice(position, targetPrice1)) {
       tracking.partialExitDone = true;
 
-      // Закрыть 50% позиции
       const partialSize = position.size * config.partialExitPct;
-      const partialPnl = position.unrealizedPnl * config.partialExitPct;
+      const partialPnl = (targetPrice1 - position.entryPrice) * partialSize * (position.side === 'BUY' ? 1 : -1);
       
       const partialTrade: TradeResult = {
         symbol: position.symbol,
         side: position.side,
         entryPrice: position.entryPrice,
-        exitPrice: currentPrice,
+        exitPrice: targetPrice1,
         size: partialSize,
         pnl: partialPnl,
-        pnlPct: (currentPrice - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1),
+        pnlPct: (targetPrice1 - position.entryPrice) / position.entryPrice * 100 * (position.side === 'BUY' ? 1 : -1),
         openTimestamp: position.openTimestamp,
         closeTimestamp: Date.now(),
         commission: 0,
@@ -268,80 +269,90 @@ export class PaperExecutor {
 
       this.tradeResults.push(partialTrade);
       position.realizedPnl += partialPnl;
+      
+      // ✅ ИСПРАВЛЕНО: корректный расчёт reservedBalance
+      const positionValueBefore = position.entryPrice * position.size;
       position.size *= (1 - config.partialExitPct);
-      this.reservedBalance -= position.entryPrice * partialSize;
+      const positionValueAfter = position.entryPrice * position.size;
+      this.reservedBalance -= (positionValueBefore - positionValueAfter);
+      this.balance += partialPnl;
 
-      logger.info(`Partial exit for ${symbol}: closed ${partialSize.toFixed(4)} (${config.partialExitPct * 100}%), PnL=${partialPnl.toFixed(2)}, remaining=${position.size.toFixed(4)}`);
+      logger.info(`Partial exit for ${symbol}: closed ${partialSize.toFixed(4)} (${config.partialExitPct * 100}%), PnL=${partialPnl.toFixed(2)}, remaining=${position.size.toFixed(4)} | Balance: ${this.balance.toFixed(2)}$, Reserved: ${this.reservedBalance.toFixed(2)}$`);
 
-      const avgHoldTime = this.tradeResults.length > 0
-        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
-        : (Date.now() - position.openTimestamp) / 1000 / 60;
-
+      const avgHoldTime = this._calculateAvgHoldTime();
       logTrade(partialTrade, 'TP1_PARTIAL', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
       
-      // ✅ Возвращаем null — не проверяем TP2 в том же тике
       return null;
     }
 
-    // ✅ Проверка TP2 — вычисляем targetPnl2Full после уменьшения size
-    const targetPnl2Full = position.size * position.signal.atr * config.tpPct2;
-    if (position.unrealizedPnl >= targetPnl2Full) {
+    // === 4. Выход на TP2 ===
+    const targetPrice2 = position.side === 'BUY'
+      ? position.entryPrice + position.signal.atr * config.tpAtrMultiple2
+      : position.entryPrice - position.signal.atr * config.tpAtrMultiple2;
+
+    if (this._hitTargetPrice(position, targetPrice2)) {
       const exitPrice = calculateExitPrice(position, orderbook);
       const result = calculateTradeResult(position, exitPrice);
-
-      this.tradeResults.push(result);
-      this.positions.delete(symbol);
-      this.positionSnapshots.delete(symbol);
-      this.balance += result.pnl;
-      this.reservedBalance -= position.entryPrice * position.size;
-
-      // ✅ Cooldown после любой сделки (15 минут)
-      this.cooldowns.set(symbol, {
-        until: Date.now() + 15 * 60 * 1000,
-        reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
-      });
-      logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
-
-      const avgHoldTime = this.tradeResults.length > 0
-        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
-        : (Date.now() - position.openTimestamp) / 1000 / 60;
-
-      logTrade(result, 'TP2', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
-      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: TP2 | Size: ${position.size.toFixed(4)}`);
-
+      
+      this._closePosition(symbol, result, tracking, 'TP2');
       return result;
     }
 
-    // Проверка стоп-лосса
+    // === 5. Выход по STOP ===
     const hitStop = shouldExitPosition(position, position.signal);
     if (hitStop) {
       const exitPrice = calculateExitPrice(position, orderbook);
       const result = calculateTradeResult(position, exitPrice);
-
-      this.tradeResults.push(result);
-      this.positions.delete(symbol);
-      this.positionSnapshots.delete(symbol);
-      this.balance += result.pnl;
-      this.reservedBalance -= position.entryPrice * position.size;
-
-      // ✅ Cooldown после любой сделки (15 минут)
-      this.cooldowns.set(symbol, {
-        until: Date.now() + 15 * 60 * 1000,
-        reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
-      });
-      logger.info(`Cooldown set for ${symbol}: 15 minutes after ${result.pnl >= 0 ? 'PROFIT' : 'LOSS'}`);
-
-      const avgHoldTime = this.tradeResults.length > 0
-        ? this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length
-        : (Date.now() - position.openTimestamp) / 1000 / 60;
-
-      logTrade(result, 'STOP', tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
-      logger.info(`Closed position: ${symbol} | PnL: ${result.pnl} (${result.pnlPct}%) | Exit: STOP`);
-
+      
+      this._closePosition(symbol, result, tracking, 'STOP');
       return result;
     }
 
     return null;
+  }
+
+  // ✅ Вспомогательный метод для проверки достижения цены
+  private _hitTargetPrice(position: PaperPosition, targetPrice: number): boolean {
+    return position.side === 'BUY'
+      ? position.currentPrice >= targetPrice
+      : position.currentPrice <= targetPrice;
+  }
+
+  // ✅ Вынесено в отдельный метод для избежания дублирования
+  private _closePosition(symbol: string, result: TradeResult, tracking: PositionTracking, exitReason: string): void {
+    this.tradeResults.push(result);
+    this.positions.delete(symbol);
+    this.positionSnapshots.delete(symbol);
+    
+    // ✅ ИСПРАВЛЕНО: корректное обновление баланса
+    const positionValueAtEntry = result.entryPrice * result.size;
+    this.balance += result.pnl;
+    this.reservedBalance -= positionValueAtEntry;
+    
+    // ✅ Обновляем daily loss
+    if (result.pnl < 0) {
+      this.dailyLoss += Math.abs(result.pnl);
+      logger.info(`Daily loss updated: ${this.dailyLoss.toFixed(2)}$ (limit: ${config.dailyLossLimit || 'none'})`);
+    }
+    
+    // ✅ Блокировка повторного открытия на 5 секунд
+    this.positionLocks.set(symbol, Date.now());
+
+    // ✅ Cooldown 15 минут
+    this.cooldowns.set(symbol, {
+      until: Date.now() + 15 * 60 * 1000,
+      reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
+    });
+
+    const avgHoldTime = this._calculateAvgHoldTime();
+    logTrade(result, exitReason, tracking.highestUnrealizedPnl, tracking.lowestUnrealizedPnl, avgHoldTime);
+    
+    logger.info(`❌ Closed: ${symbol} | PnL: ${result.pnl.toFixed(2)}$ (${result.pnlPct.toFixed(2)}%) | Exit: ${exitReason} | Balance: ${this.balance.toFixed(2)}$, Reserved: ${this.reservedBalance.toFixed(2)}$, Free: ${this.getFreeBalance().toFixed(2)}$`);
+  }
+
+  private _calculateAvgHoldTime(): number {
+    if (this.tradeResults.length === 0) return 0;
+    return this.tradeResults.reduce((sum, t) => sum + (t.closeTimestamp - t.openTimestamp) / 1000 / 60, 0) / this.tradeResults.length;
   }
 
   public incrementScans(): void {
@@ -364,14 +375,24 @@ export class PaperExecutor {
     return this.balance - this.reservedBalance;
   }
 
-  public getStats(): { totalTrades: number; winRate: number; totalPnl: number; avgPnl: number } {
+  public getStats(): { totalTrades: number; winRate: number; totalPnl: number; avgPnl: number; avgWin: number; avgLoss: number; profitFactor: number; totalCommission: number; totalSlippage: number } {
     const totalTrades = this.tradeResults.length;
     const winningTrades = this.tradeResults.filter(t => t.pnl > 0).length;
+    const losingTrades = this.tradeResults.filter(t => t.pnl <= 0).length;
     const winRate = totalTrades > 0 ? winningTrades / totalTrades : 0;
     const totalPnl = this.tradeResults.reduce((sum, t) => sum + t.pnl, 0);
     const avgPnl = totalTrades > 0 ? totalPnl / totalTrades : 0;
+    
+    const totalWins = this.tradeResults.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0);
+    const totalLosses = Math.abs(this.tradeResults.filter(t => t.pnl <= 0).reduce((sum, t) => sum + t.pnl, 0));
+    const avgWin = winningTrades > 0 ? totalWins / winningTrades : 0;
+    const avgLoss = losingTrades > 0 ? totalLosses / losingTrades : 0;
+    const profitFactor = totalLosses > 0 ? totalWins / totalLosses : 0;
+    
+    const totalCommission = this.tradeResults.reduce((sum, t) => sum + t.commission, 0);
+    const totalSlippage = this.tradeResults.reduce((sum, t) => sum + t.slippage, 0);
 
-    return { totalTrades, winRate, totalPnl, avgPnl };
+    return { totalTrades, winRate, totalPnl, avgPnl, avgWin, avgLoss, profitFactor, totalCommission, totalSlippage };
   }
 
   public getActivityStats(): { totalScans: number; totalSignals: number; totalExecutions: number } {
