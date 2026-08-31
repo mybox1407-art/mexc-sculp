@@ -11,6 +11,7 @@ export interface Config {
   logToCsv: boolean;
   csvOutputPath: string;
   scanIntervalMs: number;
+  positionUpdateIntervalMs: number; // ✅ Добавлено в интерфейс
   minDepthUsd: number;
   maxSpreadPct: number;
   minAtr1m: number;
