@@ -65,6 +65,8 @@ export class Scanner {
 
   private subscribeToSymbol(symbol: string): void {
     const orderBookHandler: OrderBookHandler = (orderbook) => {
+      logger.debug(`[SCANNER_HANDLER_CHECK] ${symbol} bid=${orderbook.bids[0].price} ask=${orderbook.asks[0].price}`);
+
       this.orderbooks.set(symbol, orderbook);
       
       if (!this.orderbookHistory.has(symbol)) {
