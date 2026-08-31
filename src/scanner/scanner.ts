@@ -92,21 +92,21 @@ export class Scanner {
    * ✅ Polling orderbook через REST API для открытых позиций.
    *
    * MEXC Futures API endpoint:
-   * https://contract.mexc.com/v2/api/depth?symbol={symbol}&limit={limit}
+   * GET /api/v1/contract/depth/{symbol}
+   * Пример: https://api.mexc.com/api/v1/contract/depth/RIVER_USDT
    *
    * Возвращает null при HTTP-ошибке, пустом или невалидном ответе.
    */
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
     try {
-      // ✅ Исправленный endpoint для MEXC Futures API v2
-      const url = `${config.mexcBaseUrl}/v3/api/depth?symbol=${encodeURIComponent(symbol)}&limit=5`;
+      // ✅ Правильный endpoint для MEXC Futures API
+      const url = `${config.mexcBaseUrl}/api/v1/contract/depth/${encodeURIComponent(symbol)}`;
 
       const response = await fetch(url);
       const rawText = await response.text();
 
-      // ✅ Логируем сырой ответ
-      logger.warn(
-        `[REST_OB_RAW] ${symbol} status=${response.status} body=${rawText.slice(0, 500)}`
+      logger.info(
+        `[REST_OB_HTTP] ${symbol} status=${response.status} url=${url}`
       );
 
       if (!response.ok) {
@@ -116,29 +116,45 @@ export class Scanner {
 
       const data = JSON.parse(rawText);
 
-      // ✅ Логируем структуру
-      logger.warn(
+      // Futures API возвращает { success, code, data: { bids, asks, cts, ... } }
+      const payload = data.data ?? data;
+      const bidsRaw = payload?.bids;
+      const asksRaw = payload?.asks;
+
+      logger.info(
         `[REST_OB_PARSED] ${symbol} ` +
-        `hasBids=${'bids' in data} hasAsks=${'asks' in data} ` +
-        `bidsLen=${Array.isArray(data.bids) ? data.bids.length : 'N/A'} ` +
-        `asksLen=${Array.isArray(data.asks) ? data.asks.length : 'N/A'}`
+        `success=${String(data.success ?? 'N/A')} ` +
+        `code=${String(data.code ?? 'N/A')} ` +
+        `bidsLen=${Array.isArray(bidsRaw) ? bidsRaw.length : 'N/A'} ` +
+        `asksLen=${Array.isArray(asksRaw) ? asksRaw.length : 'N/A'}`
       );
 
+      if (!Array.isArray(bidsRaw) || !Array.isArray(asksRaw)) {
+        logger.warn(`[REST_OB_INVALID] ${symbol} no bids/asks in response`);
+        return null;
+      }
+
+      /*
+       * MEXC Futures level format:
+       * [price, orderCount, quantity]
+       *
+       * price    = row[0]
+       * quantity = row[2]  <-- размер, а не row[1]
+       */
       const orderbook: OrderBook = {
         symbol,
-        bids: (data.bids || []).map((b: any) => ({
-          price: parseFloat(b[0]),
-          size: parseFloat(b[1]),
+        bids: bidsRaw.map((row: any[]) => ({
+          price: parseFloat(row[0]),
+          size: parseFloat(row[2]),
         })),
-        asks: (data.asks || []).map((a: any) => ({
-          price: parseFloat(a[0]),
-          size: parseFloat(a[1]),
+        asks: asksRaw.map((row: any[]) => ({
+          price: parseFloat(row[0]),
+          size: parseFloat(row[2]),
         })),
         timestamp: Date.now(),
       };
 
-      // ✅ Логируем результат
-      logger.warn(
+      logger.info(
         `[REST_OB_RESULT] ${symbol} ` +
         `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
         `bid0=${JSON.stringify(orderbook.bids[0] ?? null)} ` +
