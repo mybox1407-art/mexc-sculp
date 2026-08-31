@@ -5,7 +5,6 @@ import { calculateDepth, calculateSpreadPct, calculateVolatilityMetrics } from '
 import { detectWalls, detectVolumeMismatch, detectRevivalPattern, isTokenSupported } from './filter';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { getErrorMessage } from '../utils/error';
 
 export interface ScannedToken {
   symbol: string;
