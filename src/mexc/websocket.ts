@@ -236,6 +236,15 @@ export class MexcWebSocket {
     const asks = this.parseLevels(data.asks);
     const version = Number(data.version ?? 0);
 
+    // Логируем только для PROM и TRUMPOFFICIAL
+    if (symbol === 'PROM_USDT' || symbol === 'TRUMPOFFICIAL_USDT') {
+      logger.debug(
+        `[WS_DEPTH_CHECK] ${symbol} ` +
+        `bids=${bids.length} asks=${asks.length} version=${version} ` +
+        `bid0=${bids[0]?.price ?? 'null'} ask0=${asks[0]?.price ?? 'null'}`
+      );
+    }
+
     // Игнорируем partial стаканы
     if (bids.length === 0 || asks.length === 0) {
       return;
@@ -263,6 +272,8 @@ export class MexcWebSocket {
     if (version > 0) {
       this.lastVersion.set(symbol, version);
     }
+
+    logger.debug(`[WS_HANDLERS_CHECK] ${symbol} handlers=${this.orderBookHandlers.get(symbol)?.length ?? 0}`);
 
     const handlers = this.orderBookHandlers.get(symbol) || [];
     handlers.forEach(handler => handler(orderbook));
