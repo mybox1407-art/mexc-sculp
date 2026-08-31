@@ -63,6 +63,13 @@ export class Scanner {
     const orderBookHandler: OrderBookHandler = (orderbook) => {
       this.orderbooks.set(symbol, orderbook);
       
+      logger.debug(
+        `[SCANNER_OB] ${symbol} ` +
+        `bids=${orderbook.bids.length} asks=${orderbook.asks.length} ` +
+        `bid0=${orderbook.bids[0]?.price} ask0=${orderbook.asks[0]?.price} ` +
+        `ts=${orderbook.timestamp}`
+      );
+      
       if (!this.orderbookHistory.has(symbol)) {
         this.orderbookHistory.set(symbol, []);
       }
@@ -86,6 +93,8 @@ export class Scanner {
     
     this.mexcWs.subscribeOrderBook(symbol, orderBookHandler);
     this.mexcWs.subscribeTrades(symbol, tradeHandler);
+    
+    logger.info(`[SUBSCRIBE] ${symbol} depth+trade`);
   }
 
   /**
