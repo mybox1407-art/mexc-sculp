@@ -2,7 +2,7 @@ cd mexc-sculp
 docker compose down
 cd ~
 rm -rf mexc-sculp
-git clone https://github.com/mybox1407-art/mexc-sculp.git
+git clone http://github.com/mybox1407-art/mexc-sculp.git
 cd mexc-sculp
 npm install protobufjs
 npm install -D @types/protobufjs
