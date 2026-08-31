@@ -15,6 +15,7 @@ export class MexcWebSocket {
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
   private orderBooks: Map<string, OrderBook> = new Map();
+  private subscribedSymbols: Set<string> = new Set();  // ✅ Отслеживаем уже подписанные
 
   constructor() {}
 
@@ -22,9 +23,13 @@ export class MexcWebSocket {
     const upperSymbol = symbol.toUpperCase();
     if (!this.orderBookHandlers.has(upperSymbol)) {
       this.orderBookHandlers.set(upperSymbol, []);
-      this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'depth' });
     }
     this.orderBookHandlers.get(upperSymbol)!.push(handler);
+
+    // ✅ Добавляем в pending только если ещё не подписаны
+    if (!this.subscribedSymbols.has(`${upperSymbol}_depth`)) {
+      this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'depth' });
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(upperSymbol, 'depth');
@@ -37,9 +42,13 @@ export class MexcWebSocket {
     const upperSymbol = symbol.toUpperCase();
     if (!this.tradeHandlers.has(upperSymbol)) {
       this.tradeHandlers.set(upperSymbol, []);
-      this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'trade' });
     }
     this.tradeHandlers.get(upperSymbol)!.push(handler);
+
+    // ✅ Добавляем в pending только если ещё не подписаны
+    if (!this.subscribedSymbols.has(`${upperSymbol}_trade`)) {
+      this.pendingSubscriptions.push({ symbol: upperSymbol, type: 'trade' });
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscription(upperSymbol, 'trade');
@@ -82,6 +91,8 @@ export class MexcWebSocket {
     this.ws.on('close', () => {
       logger.info('WebSocket closed, reconnecting...');
       this.isConnecting = false;
+      // ✅ Очищаем tracking подписок перед реконнектом
+      this.subscribedSymbols.clear();
       setTimeout(() => this.connect(), this.reconnectDelay);
     });
   }
@@ -95,6 +106,8 @@ export class MexcWebSocket {
 
     for (const { symbol, type } of this.pendingSubscriptions) {
       this.sendSubscription(symbol, type);
+      // ✅ Помечаем как подписанные
+      this.subscribedSymbols.add(`${symbol}_${type}`);
     }
   }
 
