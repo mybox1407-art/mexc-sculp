@@ -18,7 +18,6 @@ export class MexcWebSocket {
   private baseUrl: string = 'wss://contract.mexc.com/edge';
   private isConnecting: boolean = false;
 
-  // Локальный собранный стакан. Здесь применяются WS-инкременты.
   private orderBooks: Map<string, OrderBook> = new Map();
 
   private pingInterval: NodeJS.Timeout | null = null;
@@ -26,7 +25,6 @@ export class MexcWebSocket {
   private reconnectAttempt = 0;
   private manuallyDisconnected = false;
 
-  // Желаемые подписки сохраняются после reconnect.
   private desiredSubscriptions = new Set<string>();
   private activeSubscriptions = new Set<string>();
 
@@ -357,14 +355,6 @@ export class MexcWebSocket {
       timestamp?: unknown;
     };
 
-    /*
-     * MEXC присылает incremental depth:
-     * - может быть только одна сторона стакана;
-     * - размер 0 означает удаление price level.
-     *
-     * Поэтому нельзя отбрасывать сообщения с пустыми bids/asks
-     * и нельзя фильтровать size=0 на этапе парсинга.
-     */
     const bidChanges = this.parseLevels(data.bids);
     const askChanges = this.parseLevels(data.asks);
 
@@ -393,19 +383,10 @@ export class MexcWebSocket {
     const bids = this.toSortedLevels(bidMap, 'bid');
     const asks = this.toSortedLevels(askMap, 'ask');
 
-    /*
-     * До первого нормального snapshot одна из сторон может быть пуста.
-     * Не публикуем такой стакан в Scanner, но удерживаем изменения,
-     * чтобы следующий пакет мог собрать валидный two-sided book.
-     */
     if (bids.length === 0 || asks.length === 0) {
       return;
     }
 
-    /*
-     * При crossed book не публикуем цену: лучше пропустить update,
-     * чем передать в стратегию невалидный bid >= ask.
-     */
     if (bids[0].price >= asks[0].price) {
       logger.warn(
         `[WS_CROSSED_BOOK] ${symbol} bid=${bids[0].price} ask=${asks[0].price}`
@@ -457,9 +438,6 @@ export class MexcWebSocket {
       const price = Number(level[0]);
       const size = Number(level[1]);
 
-      /*
-       * size=0 сохраняем: он нужен для удаления уровня из локального book.
-       */
       if (
         !Number.isFinite(price) ||
         !Number.isFinite(size) ||
@@ -545,7 +523,7 @@ export class MexcWebSocket {
 
       const trade: Trade = {
         symbol,
-        id: data.id ? String(data.id) : `${symbol}_${Date.now()}`,
+        id: data.id ? Number(data.id) : Date.now(),
         price,
         qty,
         quoteQty: Number.isFinite(quoteQty) ? quoteQty : price * qty,
