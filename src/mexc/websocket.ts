@@ -116,6 +116,9 @@ export class MexcWebSocket {
     const data = message.data;
     const symbol = String(message.symbol ?? '');
 
+    // ✅ Лог всех сообщений для отладки
+    logger.debug(`[WS_MSG] channel=${channel} symbol=${symbol} data=${JSON.stringify(data).slice(0, 200)}`);
+
     if (channel === 'push.depth' && data && symbol) {
       const orderbook: OrderBook = {
         symbol,
@@ -133,7 +136,7 @@ export class MexcWebSocket {
       const handlers = this.orderBookHandlers.get(symbol) || [];
       handlers.forEach(h => h(orderbook));
       
-      //logger.debug(`Received depth for ${symbol}: ${orderbook.bids.length} bids`);
+      logger.debug(`[WS_DEPTH] ${symbol} bids=${orderbook.bids.length} asks=${orderbook.asks.length} ts=${orderbook.timestamp}`);
     } else if (channel === 'push.deal' && data && symbol) {
       const trades = Array.isArray(data) ? data : [data];
       
@@ -151,6 +154,8 @@ export class MexcWebSocket {
         const handlers = this.tradeHandlers.get(symbol) || [];
         handlers.forEach(h => h(trade));
       }
+      
+      logger.debug(`[WS_TRADE] ${symbol} trades=${trades.length}`);
     }
   }
 
