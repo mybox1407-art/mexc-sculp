@@ -1,8 +1,21 @@
 import { MexcApi } from '../mexc/api';
-import { MexcWebSocket, OrderBookHandler, TradeHandler } from '../mexc/websocket';
+import {
+  MexcWebSocket,
+  OrderBookHandler,
+  TradeHandler,
+} from '../mexc/websocket';
 import { OrderBook, Trade, Candle, Ticker24h, SymbolInfo } from '../mexc/types';
-import { calculateDepth, calculateSpreadPct, calculateVolatilityMetrics } from './metrics';
-import { detectWalls, detectVolumeMismatch, detectRevivalPattern, isTokenSupported } from './filter';
+import {
+  calculateDepth,
+  calculateSpreadPct,
+  calculateVolatilityMetrics,
+} from './metrics';
+import {
+  detectWalls,
+  detectVolumeMismatch,
+  detectRevivalPattern,
+  isTokenSupported,
+} from './filter';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
@@ -23,14 +36,17 @@ export interface ScannedToken {
 export class Scanner {
   private mexcApi: MexcApi;
   private mexcWs: MexcWebSocket;
+
   private symbols: SymbolInfo[] = [];
   private tickers: Map<string, Ticker24h> = new Map();
   private orderbooks: Map<string, OrderBook> = new Map();
   private trades: Map<string, Trade[]> = new Map();
   private candles: Map<string, Candle[]> = new Map();
   private scannedTokens: ScannedToken[] = [];
-  private recentTradesWindowMs: number = 60000;
   private orderbookHistory: Map<string, OrderBook[]> = new Map();
+
+  private recentTradesWindowMs = 60_000;
+  private scanInProgress = false;
 
   constructor() {
     this.mexcApi = new MexcApi();
@@ -39,192 +55,281 @@ export class Scanner {
 
   public async start(): Promise<void> {
     logger.info('Starting scanner...');
-    
+
     this.symbols = await this.mexcApi.getSymbols();
     logger.info(`Loaded ${this.symbols.length} symbols`);
-    
-    this.tickers = new Map((await this.mexcApi.getTickers24h()).map(t => [t.symbol, t]));
+
+    this.tickers = new Map(
+      (await this.mexcApi.getTickers24h()).map((ticker) => [
+        ticker.symbol,
+        ticker,
+      ])
+    );
     logger.info(`Loaded ${this.tickers.size} tickers`);
-    
-    // Ждём подключения WS перед подписками
+
     await this.mexcWs.connect();
     logger.info('WebSocket connected');
-    
-    const usdtSymbols = this.symbols.filter(s => 
-      s.quoteAsset === 'USDT' && 
-      s.status === '1'
+
+    const usdtSymbols = this.symbols.filter(
+      (symbol) =>
+        symbol.quoteAsset === 'USDT' &&
+        symbol.status === '1'
     );
+
     logger.info(`Filtered ${usdtSymbols.length} USDT trading symbols`);
-    
-    for (const symbol of usdtSymbols.slice(0, 100)) {
-      this.subscribeToSymbol(symbol.symbol);
+
+    for (const symbolInfo of usdtSymbols.slice(0, 100)) {
+      await this.subscribeToSymbol(symbolInfo.symbol);
     }
-    
-    setInterval(() => this.scan(), config.scanIntervalMs);
+
+    void this.scan();
+
+    setInterval(() => {
+      void this.scan();
+    }, config.scanIntervalMs);
   }
 
-  private subscribeToSymbol(symbol: string): void {
-    const orderBookHandler: OrderBookHandler = (orderbook) => {
-      logger.debug(`[SCANNER_HANDLER_CHECK] ${symbol} bid=${orderbook.bids[0].price} ask=${orderbook.asks[0].price}`);
+  private async subscribeToSymbol(symbol: string): Promise<void> {
+    const normalizedSymbol = symbol.toUpperCase();
 
-      this.orderbooks.set(symbol, orderbook);
-      
-      if (!this.orderbookHistory.has(symbol)) {
-        this.orderbookHistory.set(symbol, []);
-      }
-      const history = this.orderbookHistory.get(symbol)!;
-      history.push(orderbook);
+    const orderBookHandler: OrderBookHandler = (orderbook) => {
+      /*
+       * Не мутируем объект, полученный из WS-клиента.
+       * Scanner хранит отдельный snapshot.
+       */
+      const snapshot: OrderBook = {
+        symbol: normalizedSymbol,
+        bids: orderbook.bids.map((level) => ({ ...level })),
+        asks: orderbook.asks.map((level) => ({ ...level })),
+        timestamp: orderbook.timestamp,
+      };
+
+      this.orderbooks.set(normalizedSymbol, snapshot);
+
+      const history = this.orderbookHistory.get(normalizedSymbol) ?? [];
+      history.push(snapshot);
+
       if (history.length > 20) {
         history.shift();
       }
+
+      this.orderbookHistory.set(normalizedSymbol, history);
     };
-    
+
     const tradeHandler: TradeHandler = (trade) => {
-      if (!this.trades.has(symbol)) {
-        this.trades.set(symbol, []);
-      }
-      const trades = this.trades.get(symbol)!;
+      const trades = this.trades.get(normalizedSymbol) ?? [];
+
       trades.push(trade);
+
       if (trades.length > 100) {
         trades.shift();
       }
+
+      this.trades.set(normalizedSymbol, trades);
     };
-    
-    this.mexcWs.subscribeOrderBook(symbol, orderBookHandler);
-    this.mexcWs.subscribeTrades(symbol, tradeHandler);
+
+    await this.mexcWs.subscribeOrderBook(normalizedSymbol, orderBookHandler);
+    await this.mexcWs.subscribeTrades(normalizedSymbol, tradeHandler);
   }
 
   public async getOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
+    const normalizedSymbol = symbol.toUpperCase();
+
     try {
-      const url = `${config.mexcBaseUrl}/api/v1/contract/depth/${encodeURIComponent(symbol)}`;
+      const url =
+        `${config.mexcBaseUrl}/api/v1/contract/depth/` +
+        encodeURIComponent(normalizedSymbol);
 
       const response = await fetch(url);
-      const rawText = await response.text();
 
       if (!response.ok) {
+        logger.warn(
+          `[REST_ORDERBOOK_ERROR] ${normalizedSymbol}: HTTP ${response.status}`
+        );
         return null;
       }
 
-      const data = JSON.parse(rawText);
+      const data = await response.json();
+      const payload = data?.data ?? data;
 
-      const payload = data.data ?? data;
       const bidsRaw = payload?.bids;
       const asksRaw = payload?.asks;
 
       if (!Array.isArray(bidsRaw) || !Array.isArray(asksRaw)) {
+        logger.warn(`[REST_ORDERBOOK_INVALID] ${normalizedSymbol}`);
         return null;
       }
 
-      const orderbook: OrderBook = {
-        symbol,
-        bids: bidsRaw.map((row: any[]) => ({
-          price: parseFloat(row[0]),
-          size: parseFloat(row[2]),
-        })),
-        asks: asksRaw.map((row: any[]) => ({
-          price: parseFloat(row[0]),
-          size: parseFloat(row[2]),
-        })),
+      const bids = this.parseRestLevels(bidsRaw, 'bid');
+      const asks = this.parseRestLevels(asksRaw, 'ask');
+
+      if (bids.length === 0 || asks.length === 0) {
+        return null;
+      }
+
+      if (bids[0].price >= asks[0].price) {
+        logger.warn(
+          `[REST_ORDERBOOK_CROSSED] ${normalizedSymbol}: ` +
+          `bid=${bids[0].price} ask=${asks[0].price}`
+        );
+        return null;
+      }
+
+      return {
+        symbol: normalizedSymbol,
+        bids,
+        asks,
         timestamp: Date.now(),
       };
-
-      if (orderbook.bids.length === 0 || orderbook.asks.length === 0) {
-        return null;
-      }
-
-      return orderbook;
     } catch (error) {
+      logger.warn(
+        `[REST_ORDERBOOK_FAILED] ${normalizedSymbol}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       return null;
     }
   }
 
   public async scan(): Promise<ScannedToken[]> {
-    logger.info('Running scan...');
-    
-    this.tickers = new Map((await this.mexcApi.getTickers24h()).map(t => [t.symbol, t]));
-    
-    const results: ScannedToken[] = [];
-    
-    for (const [symbol, ticker] of this.tickers.entries()) {
-      if (config.excludedTokens.includes(symbol)) {
-        continue;
-      }
+    if (this.scanInProgress) {
+      return this.scannedTokens;
+    }
 
-      const orderbook = this.orderbooks.get(symbol);
-      const trades = this.trades.get(symbol) || [];
-      
-      if (!orderbook) {
-        continue;
-      }
-      
-      const depthMetrics = calculateDepth(orderbook, 5);
-      const spreadPct = calculateSpreadPct(orderbook);
-      
-      if (depthMetrics.totalDepth < config.minLiquidityDepth) {
-        continue;
-      }
+    this.scanInProgress = true;
 
-      if (spreadPct > config.maxSpreadPct) {
-        continue;
-      }
-      
-      let candles: Candle[] = this.candles.get(symbol) || [];
-      if (candles.length === 0) {
-        try {
-          candles = await this.mexcApi.getCandles(symbol, '1m');
-          this.candles.set(symbol, candles);
-        } catch (error) {
+    try {
+      logger.info('Running scan...');
+
+      this.tickers = new Map(
+        (await this.mexcApi.getTickers24h()).map((ticker) => [
+          ticker.symbol,
+          ticker,
+        ])
+      );
+
+      const results: ScannedToken[] = [];
+
+      for (const [symbol, ticker] of this.tickers.entries()) {
+        if (config.excludedTokens.includes(symbol)) {
           continue;
         }
+
+        const orderbook = this.getOrderbookFromCache(symbol);
+
+        if (!orderbook) {
+          continue;
+        }
+
+        // Стакан старше 5 секунд не используем для генерации новых сигналов.
+        if (Date.now() - orderbook.timestamp > 5_000) {
+          continue;
+        }
+
+        const trades = this.trades.get(symbol) ?? [];
+
+        const depthMetrics = calculateDepth(orderbook, 5);
+        const spreadPct = calculateSpreadPct(orderbook);
+
+        if (depthMetrics.totalDepth < config.minLiquidityDepth) {
+          continue;
+        }
+
+        if (spreadPct > config.maxSpreadPct) {
+          continue;
+        }
+
+        let candles = this.candles.get(symbol) ?? [];
+
+        if (candles.length === 0) {
+          candles = await this.mexcApi.getCandles(symbol, '1m');
+
+          if (candles.length === 0) {
+            continue;
+          }
+
+          this.candles.set(symbol, candles);
+        }
+
+        const change24hPct = Number(ticker.priceChangePercent);
+
+        if (!Number.isFinite(change24hPct)) {
+          continue;
+        }
+
+        const volatilityMetrics = calculateVolatilityMetrics(
+          candles,
+          change24hPct
+        );
+
+        if (!Number.isFinite(volatilityMetrics.atr)) {
+          continue;
+        }
+
+        if (volatilityMetrics.atr < config.minAtr1m) {
+          continue;
+        }
+
+        if (Math.abs(change24hPct) < config.min24hChangePct) {
+          continue;
+        }
+
+        const wallResult = detectWalls(orderbook, 5);
+        const volumeResult = detectVolumeMismatch(
+          orderbook,
+          trades,
+          this.recentTradesWindowMs
+        );
+        const revivalPattern = detectRevivalPattern(
+          this.orderbookHistory.get(symbol) ?? [],
+          10
+        );
+
+        const isSupported = isTokenSupported(
+          depthMetrics,
+          spreadPct,
+          wallResult,
+          volumeResult,
+          revivalPattern,
+          config.minDepthUsd,
+          config.maxSpreadPct
+        );
+
+        if (!isSupported) {
+          continue;
+        }
+
+        results.push({
+          symbol,
+          depth: depthMetrics.totalDepth,
+          spreadPct,
+          atr: volatilityMetrics.atr,
+          change24hPct,
+          hasWalls: wallResult.hasWalls,
+          hasVolumeMismatch: volumeResult.hasMismatch,
+          hasRevivalPattern: revivalPattern,
+          orderbook,
+          trades,
+          candles,
+        });
       }
-      
-      const volMetrics = calculateVolatilityMetrics(candles, parseFloat(ticker.priceChangePercent));
-      
-      const wallResult = detectWalls(orderbook, 5);
-      const volumeResult = detectVolumeMismatch(orderbook, trades, this.recentTradesWindowMs);
-      const revivalPattern = detectRevivalPattern(this.orderbookHistory.get(symbol) || [], 10);
-      
-      const isSupported = isTokenSupported(
-        depthMetrics,
-        spreadPct,
-        wallResult,
-        volumeResult,
-        revivalPattern,
-        config.minDepthUsd,
-        config.maxSpreadPct
+
+      this.scannedTokens = results;
+
+      logger.info(`Scan complete: ${results.length} tokens matched`);
+
+      return results;
+    } catch (error) {
+      logger.error(
+        `Scanner error: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
-      
-      if (!isSupported) {
-        continue;
-      }
-      
-      if (volMetrics.atr < config.minAtr1m) {
-        continue;
-      }
-      
-      if (Math.abs(parseFloat(ticker.priceChangePercent)) < config.min24hChangePct) {
-        continue;
-      }
-      
-      results.push({
-        symbol,
-        depth: depthMetrics.totalDepth,
-        spreadPct,
-        atr: volMetrics.atr,
-        change24hPct: parseFloat(ticker.priceChangePercent),
-        hasWalls: wallResult.hasWalls,
-        hasVolumeMismatch: volumeResult.hasMismatch,
-        hasRevivalPattern: revivalPattern,
-        orderbook,
-        trades,
-        candles,
-      });
+
+      return this.scannedTokens;
+    } finally {
+      this.scanInProgress = false;
     }
-    
-    this.scannedTokens = results;
-    logger.info(`Scan complete: ${results.length} tokens matched`);
-    
-    return results;
   }
 
   public getScannedTokens(): ScannedToken[] {
@@ -232,17 +337,73 @@ export class Scanner {
   }
 
   public getOrderbookFromCache(symbol: string): OrderBook | null {
-    return this.orderbooks.get(symbol) || null;
+    const orderbook = this.orderbooks.get(symbol.toUpperCase());
+
+    if (!orderbook) {
+      return null;
+    }
+
+    if (
+      orderbook.bids.length === 0 ||
+      orderbook.asks.length === 0 ||
+      orderbook.bids[0].price >= orderbook.asks[0].price
+    ) {
+      return null;
+    }
+
+    return orderbook;
   }
 
-  public async refreshOrderbookFromApi(symbol: string): Promise<OrderBook | null> {
-    const orderbook = await this.getOrderbookFromApi(symbol);
-    
-    if (orderbook && orderbook.bids.length > 0 && orderbook.asks.length > 0) {
-      this.orderbooks.set(symbol, orderbook);
-      logger.info(`[SCANNER_OB_REFRESH] ${symbol}: bid=${orderbook.bids[0].price}, ask=${orderbook.asks[0].price}`);
+  public async refreshOrderbookFromApi(
+    symbol: string
+  ): Promise<OrderBook | null> {
+    const normalizedSymbol = symbol.toUpperCase();
+    const orderbook = await this.getOrderbookFromApi(normalizedSymbol);
+
+    if (orderbook) {
+      this.orderbooks.set(normalizedSymbol, orderbook);
     }
-    
+
     return orderbook;
+  }
+
+  private parseRestLevels(
+    rows: unknown[],
+    side: 'bid' | 'ask'
+  ): Array<{ price: number; size: number }> {
+    const levels: Array<{ price: number; size: number }> = [];
+
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 2) {
+        continue;
+      }
+
+      const price = Number(row[0]);
+
+      /*
+       * Futures REST часто содержит [price, ..., size].
+       * На случай формата [price, size] используем второй элемент.
+       */
+      const size = Number(row.length >= 3 ? row[2] : row[1]);
+
+      if (
+        !Number.isFinite(price) ||
+        !Number.isFinite(size) ||
+        price <= 0 ||
+        size <= 0
+      ) {
+        continue;
+      }
+
+      levels.push({ price, size });
+    }
+
+    levels.sort(
+      side === 'bid'
+        ? (a, b) => b.price - a.price
+        : (a, b) => a.price - b.price
+    );
+
+    return levels.slice(0, 100);
   }
 }
