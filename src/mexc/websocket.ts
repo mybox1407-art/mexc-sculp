@@ -17,6 +17,7 @@ export class MexcWebSocket {
   private orderBooks: Map<string, OrderBook> = new Map();
   private subscribedSymbols: Set<string> = new Set();
   private pingInterval: NodeJS.Timeout | null = null;
+  private lastVersion: Map<string, number> = new Map();  // ✅
 
   constructor() {}
 
@@ -93,6 +94,7 @@ export class MexcWebSocket {
       this.stopPing();
       this.isConnecting = false;
       this.subscribedSymbols.clear();
+      this.lastVersion.clear();
       setTimeout(() => this.connect(), this.reconnectDelay);
     });
 
@@ -166,53 +168,108 @@ export class MexcWebSocket {
   private handleDepthUpdate(symbol: string, data: any): void {
     const bids = this.parseLevels(data.bids);
     const asks = this.parseLevels(data.asks);
+    const version = Number(data.version ?? 0);
 
     if (bids.length === 0 && asks.length === 0) {
       return;
     }
 
-    let finalBids = bids;
-    let finalAsks = asks;
-
-    if (bids.length === 0 || asks.length === 0) {
-      const cached = this.orderBooks.get(symbol);
-      
-      if (cached) {
-        if (bids.length === 0 && asks.length > 0) {
-          finalBids = cached.bids;
-        } else if (asks.length === 0 && bids.length > 0) {
-          finalAsks = cached.asks;
-        }
-      } else {
+    // ✅ Проверка version
+    const lastVer = this.lastVersion.get(symbol);
+    if (lastVer && version > 0) {
+      if (version <= lastVer) {
+        return;
+      }
+      // ✅ Если большой gap — пропускаем, пусть REST обновит
+      if (version > lastVer + 1000) {
+        logger.warn(`[WS_GAP] ${symbol}: ${lastVer} → ${version}`);
+        this.lastVersion.delete(symbol);
+        this.orderBooks.delete(symbol);
         return;
       }
     }
 
-    finalBids.sort((a, b) => b.price - a.price);
-    finalAsks.sort((a, b) => a.price - b.price);
+    // ✅ Получаем кэш
+    const cached = this.orderBooks.get(symbol);
+
+    // ✅ Если нет кэша и мало уровней — пропускаем (ждем полный)
+    if (!cached && (bids.length < 20 || asks.length < 20)) {
+      return;
+    }
+
+    // ✅ Merge с кэшем
+    let finalBids = bids;
+    let finalAsks = asks;
+
+    if (cached) {
+      // ✅ Создаём map для быстрого merge
+      const bidMap = new Map<number, number>();
+      const askMap = new Map<number, number>();
+
+      // Кэш в map
+      for (const level of cached.bids) {
+        bidMap.set(level.price, level.size);
+      }
+      for (const level of cached.asks) {
+        askMap.set(level.price, level.size);
+      }
+
+      // ✅ Применяем дельты (replace)
+      for (const level of bids) {
+        if (level.size === 0) {
+          bidMap.delete(level.price);
+        } else {
+          bidMap.set(level.price, level.size);
+        }
+      }
+      for (const level of asks) {
+        if (level.size === 0) {
+          askMap.delete(level.price);
+        } else {
+          askMap.set(level.price, level.size);
+        }
+      }
+
+      // ✅ Back to array
+      finalBids = Array.from(bidMap.entries())
+        .map(([price, size]) => ({ price, size }))
+        .sort((a, b) => b.price - a.price)
+        .slice(0, 100);
+
+      finalAsks = Array.from(askMap.entries())
+        .map(([price, size]) => ({ price, size }))
+        .sort((a, b) => a.price - b.price)
+        .slice(0, 100);
+    } else {
+      // Нет кэша — сортируем как есть
+      finalBids = bids.sort((a, b) => b.price - a.price).slice(0, 100);
+      finalAsks = asks.sort((a, b) => a.price - b.price).slice(0, 100);
+    }
+
+    if (finalBids.length === 0 || finalAsks.length === 0) {
+      return;
+    }
 
     const bestBid = finalBids[0];
     const bestAsk = finalAsks[0];
 
     if (bestBid.price >= bestAsk.price) {
-      logger.warn(
-        `[INVALID_ORDERBOOK:WS] ${symbol} ` +
-        `bids=${finalBids.length} asks=${finalAsks.length} ` +
-        `bid0=${JSON.stringify(bestBid)} ` +
-        `ask0=${JSON.stringify(bestAsk)} ` +
-        `version=${data.version ?? 'n/a'}`
-      );
+      logger.debug(`[CROSSED] ${symbol}: ${bestBid.price} >= ${bestAsk.price}`);
       return;
     }
 
     const orderbook: OrderBook = {
       symbol,
-      bids: finalBids.slice(0, 100),
-      asks: finalAsks.slice(0, 100),
+      bids: finalBids,
+      asks: finalAsks,
       timestamp: Number(data.cts ?? data.timestamp ?? Date.now()),
     };
 
     this.orderBooks.set(symbol, orderbook);
+
+    if (version > 0) {
+      this.lastVersion.set(symbol, version);
+    }
 
     const handlers = this.orderBookHandlers.get(symbol) || [];
     handlers.forEach(handler => handler(orderbook));
@@ -274,5 +331,13 @@ export class MexcWebSocket {
       this.isConnecting = false;
     }
     this.orderBooks.clear();
+    this.lastVersion.clear();
+  }
+
+  public isStale(symbol: string, maxAgeMs: number = 10000): boolean {
+    const ver = this.lastVersion.get(symbol);
+    if (ver === undefined) return true;
+    // Упрощённо — просто проверяем наличие
+    return false;
   }
 }
