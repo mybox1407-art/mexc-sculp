@@ -33,9 +33,9 @@ export class PaperExecutor {
   private positionSnapshots: Map<string, PaperPosition[]> = new Map();
   private orderBooks: Map<string, OrderBook> = new Map();
   private cooldowns: Map<string, CooldownInfo> = new Map();
-  private positionLocks: Map<string, number> = new Map();  // ✅ Блокировка повторного открытия
-  private dailyLoss: number = 0;  // ✅ Убыток за сегодня
-  private lastResetDate: string = new Date().toDateString();  // ✅ Сброс dailyLoss каждый день
+  private positionLocks: Map<string, number> = new Map();
+  private dailyLoss: number = 0;
+  private lastResetDate: string = new Date().toDateString();
 
   public cacheOrderbook(symbol: string, orderbook: OrderBook): void {
     this.orderBooks.set(symbol, orderbook);
@@ -61,9 +61,7 @@ export class PaperExecutor {
     return this.positions.has(symbol);
   }
 
-  // ✅ Проверка daily loss limit
   public shouldStopTrading(): boolean {
-    // Сброс dailyLoss каждый день
     const today = new Date().toDateString();
     if (today !== this.lastResetDate) {
       this.dailyLoss = 0;
@@ -71,7 +69,6 @@ export class PaperExecutor {
       logger.info(`Daily loss reset to 0 (new day: ${today})`);
     }
 
-    // Проверка лимита
     if (config.dailyLossLimit && this.dailyLoss >= config.dailyLossLimit) {
       logger.warn(`Daily loss limit reached: ${this.dailyLoss.toFixed(2)} >= ${config.dailyLossLimit}`);
       return true;
@@ -81,13 +78,11 @@ export class PaperExecutor {
   }
 
   public executeSignal(signal: Signal, orderbook: OrderBook): PaperOrder | null {
-    // ✅ Проверка 1: позиция уже открыта
     if (this.hasOpenPosition(signal.symbol)) {
       logger.debug(`❌ Position already open for ${signal.symbol}, skipping`);
       return null;
     }
 
-    // ✅ Проверка 2: cooldown активен
     if (this.isOnCooldown(signal.symbol)) {
       const cooldown = this.cooldowns.get(signal.symbol)!;
       const remaining = Math.round((cooldown.until - Date.now()) / 1000);
@@ -95,20 +90,17 @@ export class PaperExecutor {
       return null;
     }
 
-    // ✅ Проверка 3: позиция только что закрыта (защита от дублирования в том же цикле)
     const lastCloseTime = this.positionLocks.get(signal.symbol);
     if (lastCloseTime && Date.now() - lastCloseTime < 5000) {
       logger.debug(`🔒 Position for ${signal.symbol} just closed (${Date.now() - lastCloseTime}ms ago), skipping`);
       return null;
     }
 
-    // ✅ Проверка 4: daily loss limit
     if (this.shouldStopTrading()) {
       logger.warn(`⛔ Trading stopped due to daily loss limit`);
       return null;
     }
 
-    // ✅ ИСПРАВЛЕНО: используем FREE баланс, а не общий
     const freeBalance = this.getFreeBalance();
     const positionValue = freeBalance * (config.positionSizePct / 100);
     const size = positionValue / signal.entry;
@@ -140,7 +132,6 @@ export class PaperExecutor {
     this.totalSignals++;
     this.totalExecutions++;
     
-    // ✅ Резервируем средства
     this.reservedBalance += positionValue;
     
     const position: PaperPosition = {
@@ -167,7 +158,7 @@ export class PaperExecutor {
     });
 
     this.positionSnapshots.set(signal.symbol, [position]);
-    this.positionLocks.delete(signal.symbol);  // ✅ Снимаем блокировку
+    this.positionLocks.delete(signal.symbol);
 
     const newFreeBalance = this.getFreeBalance();
     logger.info(`✅ Opened: ${signal.side} ${size.toFixed(4)} ${signal.symbol} at ${filledOrder.avgFillPrice.toFixed(4)} | Balance: ${this.balance.toFixed(2)}$, Reserved: ${this.reservedBalance.toFixed(2)}$, Free: ${newFreeBalance.toFixed(2)}$`);
@@ -211,6 +202,12 @@ export class PaperExecutor {
     if (holdMinutes > maxHoldMinutes && position.unrealizedPnl < 0) {
       logger.info(`Time-based exit for ${symbol}: held ${holdMinutes.toFixed(1)} min > ${maxHoldMinutes} min, PnL=${position.unrealizedPnl.toFixed(2)}`);
       const exitPrice = calculateExitPrice(position, orderbook);
+
+      if (exitPrice === null) {
+        logger.warn(`Cannot close ${symbol} by TIME_EXIT: invalid orderbook`);
+        return null;
+      }
+
       const result = calculateTradeResult(position, exitPrice);
       
       this._closePosition(symbol, result, tracking, 'TIME_EXIT');
@@ -238,6 +235,12 @@ export class PaperExecutor {
       if (hitTrailingStop) {
         logger.info(`Trailing stop hit for ${symbol} at ${currentPrice.toFixed(4)}`);
         const exitPrice = calculateExitPrice(position, orderbook);
+
+        if (exitPrice === null) {
+          logger.warn(`Cannot close ${symbol} by TRAILING: invalid orderbook`);
+          return null;
+        }
+
         const result = calculateTradeResult(position, exitPrice);
         
         this._closePosition(symbol, result, tracking, 'TRAILING');
@@ -270,7 +273,6 @@ export class PaperExecutor {
       this.tradeResults.push(partialTrade);
       position.realizedPnl += partialPnl;
       
-      // ✅ ИСПРАВЛЕНО: корректный расчёт reservedBalance
       const positionValueBefore = position.entryPrice * position.size;
       position.size *= (1 - config.partialExitPct);
       const positionValueAfter = position.entryPrice * position.size;
@@ -292,6 +294,12 @@ export class PaperExecutor {
 
     if (this._hitTargetPrice(position, targetPrice2)) {
       const exitPrice = calculateExitPrice(position, orderbook);
+
+      if (exitPrice === null) {
+        logger.warn(`Cannot close ${symbol} by TP2: invalid orderbook`);
+        return null;
+      }
+
       const result = calculateTradeResult(position, exitPrice);
       
       this._closePosition(symbol, result, tracking, 'TP2');
@@ -302,6 +310,12 @@ export class PaperExecutor {
     const hitStop = shouldExitPosition(position, position.signal);
     if (hitStop) {
       const exitPrice = calculateExitPrice(position, orderbook);
+
+      if (exitPrice === null) {
+        logger.warn(`Cannot close ${symbol} by STOP: invalid orderbook`);
+        return null;
+      }
+
       const result = calculateTradeResult(position, exitPrice);
       
       this._closePosition(symbol, result, tracking, 'STOP');
@@ -311,34 +325,28 @@ export class PaperExecutor {
     return null;
   }
 
-  // ✅ Вспомогательный метод для проверки достижения цены
   private _hitTargetPrice(position: PaperPosition, targetPrice: number): boolean {
     return position.side === 'BUY'
       ? position.currentPrice >= targetPrice
       : position.currentPrice <= targetPrice;
   }
 
-  // ✅ Вынесено в отдельный метод для избежания дублирования
   private _closePosition(symbol: string, result: TradeResult, tracking: PositionTracking, exitReason: string): void {
     this.tradeResults.push(result);
     this.positions.delete(symbol);
     this.positionSnapshots.delete(symbol);
     
-    // ✅ ИСПРАВЛЕНО: корректное обновление баланса
     const positionValueAtEntry = result.entryPrice * result.size;
     this.balance += result.pnl;
     this.reservedBalance -= positionValueAtEntry;
     
-    // ✅ Обновляем daily loss
     if (result.pnl < 0) {
       this.dailyLoss += Math.abs(result.pnl);
       logger.info(`Daily loss updated: ${this.dailyLoss.toFixed(2)}$ (limit: ${config.dailyLossLimit || 'none'})`);
     }
     
-    // ✅ Блокировка повторного открытия на 5 секунд
     this.positionLocks.set(symbol, Date.now());
 
-    // ✅ Cooldown 15 минут
     this.cooldowns.set(symbol, {
       until: Date.now() + 15 * 60 * 1000,
       reason: result.pnl >= 0 ? 'PROFIT' : 'LOSS',
