@@ -14,6 +14,7 @@ export class MexcWebSocket {
   private baseUrl: string = 'wss://contract.mexc.com/edge';
   private isConnecting: boolean = false;
   private pendingSubscriptions: Array<{ symbol: string; type: 'depth' | 'trade' }> = [];
+  private orderBooks: Map<string, OrderBook> = new Map();
 
   constructor() {}
 
@@ -116,27 +117,91 @@ export class MexcWebSocket {
     const data = message.data;
     const symbol = String(message.symbol ?? '');
 
-    // ✅ Лог всех сообщений для отладки
-    logger.debug(`[WS_MSG] channel=${channel} symbol=${symbol} data=${JSON.stringify(data).slice(0, 200)}`);
-
     if (channel === 'push.depth' && data && symbol) {
-      const orderbook: OrderBook = {
-        symbol,
-        bids: (data.bids || []).map((b: any) => ({
+      // ✅ Получаем текущий локальный стакан
+      const existing = this.orderBooks.get(symbol);
+      
+      // ✅ Проверяем, первый ли это снапшот (нет existing или version === 1)
+      const isSnapshot = !existing || (data.version !== undefined && data.version === 1);
+      
+      if (isSnapshot) {
+        // ✅ Первый снапшот — создаём новый стакан
+        const orderbook: OrderBook = {
+          symbol,
+          bids: (data.bids || []).map((b: any) => ({
+            price: parseFloat(b[0]),
+            size: parseFloat(b[1]),
+          })),
+          asks: (data.asks || []).map((a: any) => ({
+            price: parseFloat(a[0]),
+            size: parseFloat(a[1]),
+          })),
+          timestamp: data.cts || data.timestamp || Date.now(),
+        };
+        
+        this.orderBooks.set(symbol, orderbook);
+        
+        const handlers = this.orderBookHandlers.get(symbol) || [];
+        handlers.forEach(h => h(orderbook));
+        
+        logger.debug(`[WS_DEPTH_SNAPSHOT] ${symbol} bids=${orderbook.bids.length} asks=${orderbook.asks.length} ts=${orderbook.timestamp}`);
+      } else {
+        // ✅ Дифф — мерджим в существующий стакан
+        const bidsUpdate = (data.bids || []).map((b: any) => ({
           price: parseFloat(b[0]),
           size: parseFloat(b[1]),
-        })),
-        asks: (data.asks || []).map((a: any) => ({
+        }));
+        
+        const asksUpdate = (data.asks || []).map((a: any) => ({
           price: parseFloat(a[0]),
           size: parseFloat(a[1]),
-        })),
-        timestamp: data.timestamp || Date.now(),
-      };
-
-      const handlers = this.orderBookHandlers.get(symbol) || [];
-      handlers.forEach(h => h(orderbook));
-      
-      logger.debug(`[WS_DEPTH] ${symbol} bids=${orderbook.bids.length} asks=${orderbook.asks.length} ts=${orderbook.timestamp}`);
+        }));
+        
+        // ✅ Мердж bids
+        for (const bid of bidsUpdate) {
+          const idx = existing.bids.findIndex(b => b.price === bid.price);
+          if (idx >= 0) {
+            if (bid.size === 0) {
+              existing.bids.splice(idx, 1); // Удаляем уровень
+            } else {
+              existing.bids[idx] = bid; // Обновляем уровень
+            }
+          } else if (bid.size > 0) {
+            existing.bids.push(bid); // Добавляем новый уровень
+          }
+        }
+        
+        // ✅ Мердж asks
+        for (const ask of asksUpdate) {
+          const idx = existing.asks.findIndex(a => a.price === ask.price);
+          if (idx >= 0) {
+            if (ask.size === 0) {
+              existing.asks.splice(idx, 1); // Удаляем уровень
+            } else {
+              existing.asks[idx] = ask; // Обновляем уровень
+            }
+          } else if (ask.size > 0) {
+            existing.asks.push(ask); // Добавляем новый уровень
+          }
+        }
+        
+        // ✅ Сортируем: bids по убыванию, asks по возрастанию
+        existing.bids.sort((a, b) => b.price - a.price);
+        existing.asks.sort((a, b) => a.price - b.price);
+        
+        // ✅ Обрезаем до 100 уровней
+        existing.bids = existing.bids.slice(0, 100);
+        existing.asks = existing.asks.slice(0, 100);
+        
+        existing.timestamp = data.cts || data.timestamp || Date.now();
+        
+        this.orderBooks.set(symbol, existing);
+        
+        const handlers = this.orderBookHandlers.get(symbol) || [];
+        handlers.forEach(h => h(existing));
+        
+        logger.debug(`[WS_DEPTH_DIFF] ${symbol} bids=${existing.bids.length} asks=${existing.asks.length} ts=${existing.timestamp}`);
+      }
     } else if (channel === 'push.deal' && data && symbol) {
       const trades = Array.isArray(data) ? data : [data];
       
