@@ -37,8 +37,13 @@ async function main() {
       logger.info(`📊 Open positions: ${openPositions.length}`);
       
       for (const position of openPositions) {
-        // ✅ Берём текущий WS-стакан из кэша (последний дифф от MEXC)
-        let orderbook = executor.getLastOrderbook(position.symbol);
+        // ✅ Берём свежий WS-стакан из Scanner (обновляется WebSocket-хендлером)
+        let orderbook = scanner.getOrderbookFromCache(position.symbol);
+
+        // ✅ Fallback на кэш Executor если WS ещё не прислал
+        if (!orderbook || orderbook.bids.length === 0 || orderbook.asks.length === 0) {
+          orderbook = executor.getLastOrderbook(position.symbol);
+        }
 
         // ✅ Логируем проверку WS-стакана
         logger.info(
