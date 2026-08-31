@@ -3,6 +3,7 @@ import { calculateVWAP, calculateMidPrice } from './indicators';
 import { OrderBook, Candle } from '../mexc/types';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { getBestPrices } from '../executor/orders';
 
 export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr: number): Signal | null {
   // ✅ Фильтр по объёму: мин. средний объём за 20 свечей
@@ -12,22 +13,21 @@ export function generateVWAPSignal(candles: Candle[], orderbook: OrderBook, atr:
     return null;
   }
 
+  // ✅ Валидация orderbook
+  const prices = getBestPrices(orderbook);
+  if (!prices) {
+    logger.debug(`[SIGNAL] Invalid orderbook for ${candles[0]?.symbol}, skipping`);
+    return null;
+  }
+
   const vwap = calculateVWAP(candles);
-  const currentPrice = calculateMidPrice(orderbook.bids[0].price, orderbook.asks[0].price);
+  const currentPrice = calculateMidPrice(prices.bestBid, prices.bestAsk);
   const deviation = Math.abs(currentPrice - vwap) / vwap;
 
   // ✅ Вход: ×1.5 ATR
   if (deviation > atr * config.atrMultiple * 1.5 / vwap) {
     const side = currentPrice > vwap ? 'SELL' : 'BUY';
     
-    // ✅ MFE фильтр ОТКЛЮЧЁН — блокировал все сигналы
-    // const { resistance, support } = calculateSupportResistance(candles, 20);
-    // const distanceToResistance = (resistance - currentPrice) / currentPrice;
-    // const distanceToSupport = (currentPrice - support) / currentPrice;
-    // const targetDistance = Math.abs(vwap - currentPrice) / currentPrice;
-    // if (side === 'BUY' && distanceToResistance < targetDistance * 0.3) { return null; }
-    // if (side === 'SELL' && distanceToSupport < targetDistance * 0.3) { return null; }
-
     // ✅ TP = entry ± ATR × tpAtrMultiple
     const tpDistance = atr * config.tpAtrMultiple1;
     const target = side === 'BUY'
